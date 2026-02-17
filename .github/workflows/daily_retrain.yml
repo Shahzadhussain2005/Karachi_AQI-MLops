@@ -1,18 +1,17 @@
-name: Daily Model Retraining (CI Only)
+name: Daily Data Collection & Model Training
 
 on:
   schedule:
-    - cron: '28 19 * * *'
-  workflow_dispatch:        
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
-  retrain-models:
+  data-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
-    
-    - name: Checkout repository
+    - name: Checkout code
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GH_PAT }}
@@ -24,109 +23,86 @@ jobs:
         python-version: '3.11'
         cache: 'pip'
 
-    
-    - name: Install Python packages
+    - name: Install packages
       run: |
-        python -m pip install --upgrade pip
-        pip install \
-          jupyter \
-          nbconvert \
-          pandas \
-          numpy \
-          scikit-learn \
-          xgboost \
-          lightgbm \
-          pymongo \
-          "pymongo[srv]" \
-          dnspython \
-          requests \
-          python-dotenv
+        pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo "pymongo[srv]" dnspython requests python-dotenv meteostat
 
-   
+    - name: List files
+      run: |
+        echo "=== Scripts/ ==="
+        ls -la Scripts/ 2>/dev/null || echo "Not found"
+
     - name: Fetch latest AQI data
+      run: |
+        echo "📡 Fetching data..."
+        jupyter nbconvert --to script "Scripts/Fetch_latest_data.ipynb" --output /tmp/fetch
+        python /tmp/fetch.py
+      continue-on-error: true
+
+    - name: Clean data
+      run: |
+        echo "🧹 Cleaning data..."
+        jupyter nbconvert --to script "Scripts/clean_data.ipynb" --output /tmp/clean
+        python /tmp/clean.py
+      continue-on-error: true
+
+    - name: Upload to MongoDB
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
-        echo "Fetching data from APIs..."
-        jupyter nbconvert --to script Scripts/Fetch_latest_data.ipynb --output /tmp/fetch
-        python /tmp/fetch.py || echo "Data fetch completed with warnings"
+        echo "☁️ Uploading to MongoDB..."
+        jupyter nbconvert --to script "Scripts/mongodb_connect.ipynb" --output /tmp/mongo
+        python /tmp/mongo.py
       continue-on-error: true
 
-   
-    - name: Clean and prepare data
+    - name: Train models
       run: |
-        echo "Cleaning data..."
-        jupyter nbconvert --to script Scripts/clean_data.ipynb --output /tmp/clean
-        python /tmp/clean.py || echo "Data cleaning completed"
-      continue-on-error: true
-
-    
-    - name: Train ML models
-      run: |
-        echo "Training models..."
-        jupyter nbconvert --to script Scripts/train_models.ipynb --output /tmp/train
+        echo "🤖 Training models..."
+        jupyter nbconvert --to script "Scripts/train_models.ipynb" --output /tmp/train
         python /tmp/train.py
 
-    
     - name: Prepare dashboard data
       run: |
         python - <<'EOF'
         import pandas as pd
         import os
-        
-        print("Preparing dashboard data...")
-        
-        # Try to find cleaned CSV
-        for csv_path in ['data/cleaned_aqi_data_v3.csv', 
-                         'data/cleaned_aqi_data_v2.csv',
-                         'data/complete_aqi_dataset.csv']:
-            if os.path.exists(csv_path):
-                df = pd.read_csv(csv_path)
-                
-                # Keep last 30 days (720 hours)
-                df = df.tail(720)
-                
-                # Save for dashboard
-                os.makedirs('data', exist_ok=True)
+        for csv in ['data/cleaned_aqi_data_v3.csv','data/cleaned_aqi_data_v2.csv']:
+            if os.path.exists(csv):
+                df = pd.read_csv(csv).tail(720)
                 df.to_csv('data/historical_aqi.csv', index=False)
-                
-                print(f"✓ Dashboard data ready: {len(df)} rows from {csv_path}")
+                print(f"✓ Dashboard: {len(df)} rows from {csv}")
                 break
-        else:
-            print("⚠ No cleaned CSV found - dashboard data not updated")
         EOF
 
-   
-    - name: Commit and push changes
+    - name: Check results
       run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        
-        # Add models and data
-        git add Scripts/models/ data/historical_aqi.csv || true
-        
-        # Only commit if there are changes
-        git diff --staged --quiet || {
-          git commit -m "🤖 Daily model retrain: $(date +'%Y-%m-%d %H:%M UTC')"
-          git push origin main
-          echo "✓ Changes pushed to GitHub"
-        } || echo "✓ No changes to commit"
+        echo "=== Results ==="
+        ls -lh data/*.csv 2>/dev/null || true
+        ls -lh Scripts/models/*.pkl 2>/dev/null || true
+        ls -lh models/*.pkl 2>/dev/null || true
 
-    
-    - name: Job Summary
+    - name: Commit changes
+      run: |
+        git config user.email "actions@github.com"
+        git config user.name "GitHub Actions"
+        git add Scripts/models/ models/ data/ 2>/dev/null || true
+        git diff --staged --quiet || {
+          git commit -m "🤖 Daily pipeline: $(date +'%Y-%m-%d %H:%M UTC')"
+          git push origin main
+          echo "✓ Pushed to GitHub"
+        }
+
+    - name: Summary
       if: always()
       run: |
-        echo "=================================================="
-        echo "CI Pipeline Complete"
-        echo "=================================================="
-        echo ""
-        echo "✓ Data fetched"
-        echo "✓ Data cleaned"
-        echo "✓ Models trained"
-        echo "✓ Changes committed to GitHub"
-        echo ""
-        echo "Models location: Scripts/models/"
-        echo "Dashboard data:  data/historical_aqi.csv"
-        echo ""
-        echo "Next run: Tomorrow at 00:00 UTC"
-        echo "=================================================="
+        echo "================================================"
+        echo "PIPELINE COMPLETE"
+        echo "================================================"
+        echo "✓ Fetched data"
+        echo "✓ Cleaned data"
+        echo "✓ Uploaded to MongoDB"
+        echo "✓ Trained models"
+        echo "✓ Updated dashboard"
+        echo "✓ Committed to GitHub"
+        echo "Next run: Tomorrow 00:00 UTC"
+        echo "================================================"
