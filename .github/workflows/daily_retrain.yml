@@ -2,8 +2,8 @@ name: Daily Model Retraining (CI Only)
 
 on:
   schedule:
-    - cron: '0 0 * * *'   # Every day at midnight UTC
-  workflow_dispatch:        # Manual trigger button
+    - cron: '28 19 * * *'
+  workflow_dispatch:        
 
 jobs:
   retrain-models:
@@ -11,27 +11,20 @@ jobs:
     timeout-minutes: 60
 
     steps:
-    # ------------------------------------------------------------------ #
-    # 1. Checkout code                                                     #
-    # ------------------------------------------------------------------ #
+    
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GH_PAT }}
         fetch-depth: 0
 
-    # ------------------------------------------------------------------ #
-    # 2. Set up Python                                                     #
-    # ------------------------------------------------------------------ #
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         cache: 'pip'
 
-    # ------------------------------------------------------------------ #
-    # 3. Install dependencies                                              #
-    # ------------------------------------------------------------------ #
+    
     - name: Install Python packages
       run: |
         python -m pip install --upgrade pip
@@ -49,9 +42,7 @@ jobs:
           requests \
           python-dotenv
 
-    # ------------------------------------------------------------------ #
-    # 4. Fetch latest data                                                 #
-    # ------------------------------------------------------------------ #
+   
     - name: Fetch latest AQI data
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
@@ -61,9 +52,7 @@ jobs:
         python /tmp/fetch.py || echo "Data fetch completed with warnings"
       continue-on-error: true
 
-    # ------------------------------------------------------------------ #
-    # 5. Clean data                                                        #
-    # ------------------------------------------------------------------ #
+   
     - name: Clean and prepare data
       run: |
         echo "Cleaning data..."
@@ -71,18 +60,14 @@ jobs:
         python /tmp/clean.py || echo "Data cleaning completed"
       continue-on-error: true
 
-    # ------------------------------------------------------------------ #
-    # 6. Train models                                                      #
-    # ------------------------------------------------------------------ #
+    
     - name: Train ML models
       run: |
         echo "Training models..."
         jupyter nbconvert --to script Scripts/train_models.ipynb --output /tmp/train
         python /tmp/train.py
 
-    # ------------------------------------------------------------------ #
-    # 7. Prepare dashboard data                                            #
-    # ------------------------------------------------------------------ #
+    
     - name: Prepare dashboard data
       run: |
         python - <<'EOF'
@@ -111,9 +96,7 @@ jobs:
             print("⚠ No cleaned CSV found - dashboard data not updated")
         EOF
 
-    # ------------------------------------------------------------------ #
-    # 8. Commit updated models back to repo                                #
-    # ------------------------------------------------------------------ #
+   
     - name: Commit and push changes
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
@@ -129,9 +112,7 @@ jobs:
           echo "✓ Changes pushed to GitHub"
         } || echo "✓ No changes to commit"
 
-    # ------------------------------------------------------------------ #
-    # 9. Summary                                                           #
-    # ------------------------------------------------------------------ #
+    
     - name: Job Summary
       if: always()
       run: |
