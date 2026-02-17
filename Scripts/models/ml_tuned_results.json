@@ -1,0 +1,224 @@
+{
+  "24h": {
+    "Ridge": {
+      "test_R2": 0.012716567955325497,
+      "test_RMSE": 55.82804606260465,
+      "test_MAE": 28.41478474127257,
+      "test_MAPE": 24.991837255187022,
+      "test_Acc20": 51.52224824355972,
+      "test_Acc10": 23.4192037470726,
+      "test_Acc5": 11.241217798594848,
+      "train_R2": 0.16761831343064337,
+      "cv_R2": 0.08527362328336752,
+      "best_params_str": "{'alpha': 100.0, 'solver': 'saga'}"
+    },
+    "Lasso": {
+      "test_R2": 0.008852629679723667,
+      "test_RMSE": 55.93718669365977,
+      "test_MAE": 28.707656150463603,
+      "test_MAPE": 25.45064683435886,
+      "test_Acc20": 52.341920374707264,
+      "test_Acc10": 22.833723653395786,
+      "test_Acc5": 11.7096018735363,
+      "train_R2": 0.1691781776759692,
+      "cv_R2": 0.07578839043598835,
+      "best_params_str": "{'alpha': 0.1}"
+    },
+    "Random Forest": {
+      "test_R2": -0.00891522642554099,
+      "test_RMSE": 56.436340083127384,
+      "test_MAE": 29.407278110461046,
+      "test_MAPE": 26.11052018364451,
+      "test_Acc20": 49.18032786885246,
+      "test_Acc10": 27.28337236533958,
+      "test_Acc5": 14.988290398126464,
+      "train_R2": 0.28033098020219493,
+      "cv_R2": 0.042208703851108864,
+      "best_params_str": "{'max_depth': 5, 'min_samples_leaf': 8, 'min_samples_split': 20, 'n_estimators': 100}"
+    },
+    "Gradient Boosting": {
+      "test_R2": 0.034821252871962693,
+      "test_RMSE": 55.199529859634815,
+      "test_MAE": 27.74023038594339,
+      "test_MAPE": 24.994526486279558,
+      "test_Acc20": 50.468384074941454,
+      "test_Acc10": 22.716627634660423,
+      "test_Acc5": 11.124121779859484,
+      "train_R2": 0.12801167099826571,
+      "cv_R2": 0.039527673457148395,
+      "best_params_str": "{'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 50, 'subsample': 0.8}"
+    },
+    "XGBoost": {
+      "test_R2": 0.036056052012409134,
+      "test_RMSE": 55.16420886527364,
+      "test_MAE": 28.06695563787599,
+      "test_MAPE": 25.143311650711375,
+      "test_Acc20": 49.88290398126464,
+      "test_Acc10": 24.824355971896956,
+      "test_Acc5": 11.7096018735363,
+      "train_R2": 0.18238951251523083,
+      "cv_R2": 0.06635490209268806,
+      "best_params_str": "{'colsample_bytree': 0.8, 'learning_rate': 0.01, 'max_depth': 3, 'min_child_weight': 1, 'n_estimators': 100, 'subsample': 0.8}"
+    },
+    "LightGBM": {
+      "test_R2": -0.012532607902010717,
+      "test_RMSE": 56.53742345510028,
+      "test_MAE": 29.61754585119858,
+      "test_MAPE": 26.15995148728934,
+      "test_Acc20": 49.06323185011709,
+      "test_Acc10": 25.292740046838407,
+      "test_Acc5": 13.817330210772832,
+      "train_R2": 0.3838881517308289,
+      "cv_R2": 0.05175530213103019,
+      "best_params_str": "{'learning_rate': 0.01, 'max_depth': 7, 'min_child_samples': 30, 'n_estimators': 200, 'num_leaves': 31}"
+    }
+  },
+  "48h": {
+    "Ridge": {
+      "test_R2": 0.021798820397542662,
+      "test_RMSE": 58.69274097322836,
+      "test_MAE": 27.916742109294653,
+      "test_MAPE": 24.159585349347047,
+      "test_Acc20": 51.288056206088996,
+      "test_Acc10": 27.5175644028103,
+      "test_Acc5": 13.934426229508196,
+      "train_R2": 0.11501121219910204,
+      "cv_R2": -0.008928176872579999,
+      "best_params_str": "{'alpha': 100.0, 'solver': 'saga'}"
+    },
+    "Lasso": {
+      "test_R2": 0.031500884898423065,
+      "test_RMSE": 58.40095039713791,
+      "test_MAE": 27.859441520675855,
+      "test_MAPE": 24.303759487267733,
+      "test_Acc20": 49.414519906323186,
+      "test_Acc10": 27.400468384074944,
+      "test_Acc5": 14.285714285714285,
+      "train_R2": 0.10356833275542932,
+      "cv_R2": 0.008479865413562085,
+      "best_params_str": "{'alpha': 1.0}"
+    },
+    "Random Forest": {
+      "test_R2": 0.03256290284871777,
+      "test_RMSE": 58.36892152434257,
+      "test_MAE": 27.823425116161218,
+      "test_MAPE": 23.9882410401294,
+      "test_Acc20": 50.93676814988291,
+      "test_Acc10": 26.46370023419204,
+      "test_Acc5": 14.519906323185012,
+      "train_R2": 0.28607782894700384,
+      "cv_R2": -0.14407551976594615,
+      "best_params_str": "{'max_depth': 5, 'min_samples_leaf': 8, 'min_samples_split': 10, 'n_estimators': 200}"
+    },
+    "Gradient Boosting": {
+      "test_R2": 0.01844002245528409,
+      "test_RMSE": 58.79341971234366,
+      "test_MAE": 28.057251929972573,
+      "test_MAPE": 24.401294092835172,
+      "test_Acc20": 50.35128805620609,
+      "test_Acc10": 27.86885245901639,
+      "test_Acc5": 13.23185011709602,
+      "train_R2": 0.10406504917477977,
+      "cv_R2": -0.013986388405562766,
+      "best_params_str": "{'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 50, 'subsample': 0.8}"
+    },
+    "XGBoost": {
+      "test_R2": 0.024815116049653696,
+      "test_RMSE": 58.60218120594028,
+      "test_MAE": 28.03735896519252,
+      "test_MAPE": 24.54919213724056,
+      "test_Acc20": 50.93676814988291,
+      "test_Acc10": 28.10304449648712,
+      "test_Acc5": 12.646370023419204,
+      "train_R2": 0.17779147296636566,
+      "cv_R2": -0.005194809004676208,
+      "best_params_str": "{'colsample_bytree': 0.8, 'learning_rate': 0.01, 'max_depth': 5, 'min_child_weight': 1, 'n_estimators': 50, 'subsample': 0.8}"
+    },
+    "LightGBM": {
+      "test_R2": 0.025202780388353774,
+      "test_RMSE": 58.590532012843504,
+      "test_MAE": 27.596820643634736,
+      "test_MAPE": 23.48471668167686,
+      "test_Acc20": 51.288056206088996,
+      "test_Acc10": 28.57142857142857,
+      "test_Acc5": 14.402810304449648,
+      "train_R2": 0.1486969367893458,
+      "cv_R2": -0.024771356942636397,
+      "best_params_str": "{'learning_rate': 0.01, 'max_depth': 3, 'min_child_samples': 10, 'n_estimators': 100, 'num_leaves': 15}"
+    }
+  },
+  "72h": {
+    "Ridge": {
+      "test_R2": 0.02478786621828455,
+      "test_RMSE": 58.61052006587517,
+      "test_MAE": 27.487544695695007,
+      "test_MAPE": 23.61479884176353,
+      "test_Acc20": 54.09836065573771,
+      "test_Acc10": 29.97658079625293,
+      "test_Acc5": 15.105386416861826,
+      "train_R2": 0.09768603643573004,
+      "cv_R2": -0.12049122425594379,
+      "best_params_str": "{'alpha': 100.0, 'solver': 'saga'}"
+    },
+    "Lasso": {
+      "test_R2": 0.03306123156199281,
+      "test_RMSE": 58.361374747133844,
+      "test_MAE": 27.4144673891545,
+      "test_MAPE": 23.87116854446492,
+      "test_Acc20": 51.288056206088996,
+      "test_Acc10": 27.5175644028103,
+      "test_Acc5": 14.988290398126464,
+      "train_R2": 0.08326851024608661,
+      "cv_R2": -0.04610753544389216,
+      "best_params_str": "{'alpha': 1.0}"
+    },
+    "Random Forest": {
+      "test_R2": 0.01453420363613056,
+      "test_RMSE": 58.91783835417702,
+      "test_MAE": 27.4508524398686,
+      "test_MAPE": 23.527020072335265,
+      "test_Acc20": 55.386416861826696,
+      "test_Acc10": 28.454332552693206,
+      "test_Acc5": 14.8711943793911,
+      "train_R2": 0.2914390558257096,
+      "cv_R2": -0.2913041330889809,
+      "best_params_str": "{'max_depth': 5, 'min_samples_leaf': 8, 'min_samples_split': 10, 'n_estimators': 200}"
+    },
+    "Gradient Boosting": {
+      "test_R2": -0.0015882001374563082,
+      "test_RMSE": 59.397836502588724,
+      "test_MAE": 28.388882336638613,
+      "test_MAPE": 24.67710549421796,
+      "test_Acc20": 52.69320843091335,
+      "test_Acc10": 27.751756440281028,
+      "test_Acc5": 12.412177985948478,
+      "train_R2": 0.10554851908484308,
+      "cv_R2": -0.2583274735938674,
+      "best_params_str": "{'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 50, 'subsample': 0.8}"
+    },
+    "XGBoost": {
+      "test_R2": 0.011614180205219315,
+      "test_RMSE": 59.00506320460866,
+      "test_MAE": 28.171932381265893,
+      "test_MAPE": 24.683279722532035,
+      "test_Acc20": 52.10772833723654,
+      "test_Acc10": 27.985948477751755,
+      "test_Acc5": 12.177985948477751,
+      "train_R2": 0.2386643782280523,
+      "cv_R2": -0.01729347041265672,
+      "best_params_str": "{'colsample_bytree': 0.8, 'learning_rate': 0.01, 'max_depth': 7, 'min_child_weight': 5, 'n_estimators': 50, 'subsample': 0.8}"
+    },
+    "LightGBM": {
+      "test_R2": -0.009296668199356706,
+      "test_RMSE": 59.62596855154627,
+      "test_MAE": 28.365318769598584,
+      "test_MAPE": 24.401901399909484,
+      "test_Acc20": 53.86416861826698,
+      "test_Acc10": 28.688524590163933,
+      "test_Acc5": 12.412177985948478,
+      "train_R2": 0.09958383846307073,
+      "cv_R2": -0.038108587172687725,
+      "best_params_str": "{'learning_rate': 0.01, 'max_depth': 3, 'min_child_samples': 10, 'n_estimators': 50, 'num_leaves': 15}"
+    }
+  }
+}
