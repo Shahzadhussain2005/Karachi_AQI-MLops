@@ -1,5 +1,4 @@
 name: Daily Data Collection & Model Training
-
 on:
   schedule:
     - cron: '0 0 * * *'
@@ -9,43 +8,43 @@ jobs:
   data-pipeline:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GH_PAT }}
         fetch-depth: 0
-
+    
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         cache: 'pip'
-
+    
     - name: Install packages
       run: |
         pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo "pymongo[srv]" dnspython requests python-dotenv meteostat
-
+    
     - name: List files
       run: |
         echo "=== Scripts/ ==="
         ls -la Scripts/ 2>/dev/null || echo "Not found"
-
+    
     - name: Fetch latest AQI data
       run: |
         echo "📡 Fetching data..."
         jupyter nbconvert --to script "Scripts/Fetch_latest_data.ipynb" --output /tmp/fetch
         python /tmp/fetch.py
       continue-on-error: true
-
+    
     - name: Clean data
       run: |
         echo "🧹 Cleaning data..."
         jupyter nbconvert --to script "Scripts/clean_data.ipynb" --output /tmp/clean
         python /tmp/clean.py
       continue-on-error: true
-
+    
     - name: Upload to MongoDB
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
@@ -54,13 +53,17 @@ jobs:
         jupyter nbconvert --to script "Scripts/mongodb_connect.ipynb" --output /tmp/mongo
         python /tmp/mongo.py
       continue-on-error: true
-
-    - name: Train models
+    
+    - name: Train ML models (Optimized)
+      env:
+        MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
-        echo "🤖 Training models..."
-        jupyter nbconvert --to script "Scripts/train_models.ipynb" --output /tmp/train
-        python /tmp/train.py
-
+        echo "🤖 Training ML models with hyperparameter tuning..."
+        echo "📊 Training 6 models × 3 horizons (24h, 48h, 72h)"
+        echo "⏱️  Expected time: 10-20 minutes"
+        jupyter nbconvert --to script "Scripts/models.ipynb" --output /tmp/models
+        python /tmp/models.py
+    
     - name: Prepare dashboard data
       run: |
         python - <<'EOF'
@@ -73,25 +76,29 @@ jobs:
                 print(f"✓ Dashboard: {len(df)} rows from {csv}")
                 break
         EOF
-
+    
     - name: Check results
       run: |
         echo "=== Results ==="
         ls -lh data/*.csv 2>/dev/null || true
-        ls -lh Scripts/models/*.pkl 2>/dev/null || true
+        echo ""
+        echo "=== Trained Models ==="
         ls -lh models/*.pkl 2>/dev/null || true
-
+        echo ""
+        echo "=== Model Results ==="
+        cat models/ml_tuned_results.json 2>/dev/null || echo "Results file not found"
+    
     - name: Commit changes
       run: |
         git config user.email "actions@github.com"
         git config user.name "GitHub Actions"
-        git add Scripts/models/ models/ data/ 2>/dev/null || true
+        git add models/ data/ 2>/dev/null || true
         git diff --staged --quiet || {
           git commit -m "🤖 Daily pipeline: $(date +'%Y-%m-%d %H:%M UTC')"
           git push origin main
           echo "✓ Pushed to GitHub"
         }
-
+    
     - name: Summary
       if: always()
       run: |
@@ -101,7 +108,7 @@ jobs:
         echo "✓ Fetched data"
         echo "✓ Cleaned data"
         echo "✓ Uploaded to MongoDB"
-        echo "✓ Trained models"
+        echo "✓ Trained 18 ML models (6 models × 3 horizons)"
         echo "✓ Updated dashboard"
         echo "✓ Committed to GitHub"
         echo "Next run: Tomorrow 00:00 UTC"
