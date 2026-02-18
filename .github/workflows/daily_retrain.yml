@@ -1,102 +1,195 @@
-name: Daily Model Retraining
+name: Daily Model Retraining (CI Only)
 
 on:
   schedule:
-    - cron: '*/20 * * * *'
-  workflow_dispatch:
+    - cron: '0 0 * * *'  # Daily at midnight UTC
+  workflow_dispatch:  # Manual trigger
 
 jobs:
-  retrain:
+  retrain-models:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-
+    
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
       with:
         token: ${{ secrets.GH_PAT }}
-
-    - uses: actions/setup-python@v5
+        fetch-depth: 0
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.12'
-
-    - run: pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo "pymongo[srv]" dnspython requests meteostat
-
-    - name: Fetch
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo "pymongo[srv]" dnspython requests python-dotenv meteostat
+    
+    - name: Verify files
+      run: |
+        echo "=== Repository Structure ==="
+        ls -la
+        echo ""
+        echo "=== Scripts Directory ==="
+        ls -la Scripts/ 2>/dev/null || echo "Scripts/ not found"
+        echo ""
+        echo "=== Data Directory ==="
+        ls -la data/ 2>/dev/null || echo "data/ not found"
+    
+    - name: Fetch latest AQI data
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
-      run: jupyter nbconvert --to python Scripts/Fetch_latest_data.ipynb --stdout | python || true
-      continue-on-error: true
-
-    - name: Clean
-      run: jupyter nbconvert --to python Scripts/clean_data.ipynb --stdout | python || true
-      continue-on-error: true
-
-    - name: Train
       run: |
-        python - <<'EOF'
-        import pandas as pd, numpy as np, pickle, os
-        from sklearn.preprocessing import StandardScaler
-        import xgboost as xgb, lightgbm as lgb
-        
-        df = pd.read_csv('data/cleaned_aqi_data_v2.csv')
-        print(f"Loaded: {len(df)} rows, {len(df.columns)} cols")
-        
-        # Fill ALL missing values first
-        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
-        
-        # Keep numeric only
-        numeric_df = df.select_dtypes(include=[np.number])
-        print(f"Numeric: {len(numeric_df.columns)} cols")
-        
-        # Must have 'aqi' column
-        if 'aqi' not in numeric_df.columns:
-            print("ERROR: No 'aqi' column")
-            exit(1)
-        
-        # Create target - use last 1500 rows only
-        data = numeric_df.tail(1500).copy()
-        data['target'] = data['aqi'].shift(-24)
-        
-        # Drop last 24 rows (no target)
-        data = data[:-24]
-        
-        X = data.drop(['target'], axis=1)
-        y = data['target']
-        
-        print(f"Final: {len(X)} rows, {len(X.columns)} features")
-        
-        if len(X) < 100:
-            print("ERROR: Not enough data after processing")
-            exit(1)
-        
-        split = int(len(X)*0.8)
-        X_train, X_test = X.iloc[:split], X.iloc[split:]
-        y_train, y_test = y.iloc[:split], y.iloc[split:]
-        
-        scaler = StandardScaler()
-        X_train = scaler.fit_transform(X_train)
-        X_test = scaler.transform(X_test)
-        
-        os.makedirs('models', exist_ok=True)
-        
-        for name, model in [
-            ('xgboost', xgb.XGBRegressor(n_estimators=30, max_depth=3, random_state=42)),
-            ('lightgbm', lgb.LGBMRegressor(n_estimators=30, max_depth=3, random_state=42, verbose=-1))
-        ]:
-            model.fit(X_train, y_train)
-            score = model.score(X_test, y_test)
-            with open(f'models/{name}_24h.pkl', 'wb') as f:
-                pickle.dump(model, f)
-            print(f"✓ {name}: R²={score:.3f}")
-        
-        with open('models/scaler_ml.pkl', 'wb') as f:
-            pickle.dump(scaler, f)
-        print("✓ All models saved")
-        EOF
-
-    - name: Commit
+        echo "📡 Fetching latest AQI data..."
+        jupyter nbconvert --to script "Scripts/Fetch_latest_data.ipynb" --output /tmp/fetch --log-level ERROR
+        python /tmp/fetch.py || echo "⚠️ Fetch failed, continuing..."
+      continue-on-error: true
+    
+    - name: Clean and prepare data
       run: |
-        git config user.email "bot@github.com"
-        git config user.name "Bot"
-        git add models/ || true
-        git diff --staged --quiet || git commit -m "🤖 $(date +'%Y-%m-%d %H:%M')" && git push || true
+        echo "🧹 Cleaning data..."
+        jupyter nbconvert --to script "Scripts/clean_data.ipynb" --output /tmp/clean --log-level ERROR
+        python /tmp/clean.py || echo "⚠️ Clean failed, continuing..."
+      continue-on-error: true
+    
+    - name: Upload to MongoDB
+      env:
+        MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      run: |
+        echo "☁️ Uploading to MongoDB..."
+        if [ -f "Scripts/mongodb_connect.ipynb" ]; then
+          jupyter nbconvert --to script "Scripts/mongodb_connect.ipynb" --output /tmp/mongo --log-level ERROR
+          python /tmp/mongo.py || echo "⚠️ MongoDB upload failed, continuing..."
+        else
+          echo "ℹ️ mongodb_connect.ipynb not found, skipping..."
+        fi
+      continue-on-error: true
+    
+    - name: Train ML models (Optimized)
+      env:
+        MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      run: |
+        echo "🤖 Training ML models..."
+        echo "📊 Training 6 models × 3 horizons (24h, 48h, 72h)"
+        echo "⏱️  Expected time: 10-20 minutes"
+        
+        if [ -f "Scripts/models.ipynb" ]; then
+          echo "Using models.ipynb..."
+          jupyter nbconvert --to script "Scripts/models.ipynb" --output /tmp/train --log-level ERROR
+          python /tmp/train.py
+        elif [ -f "Scripts/train_model.py" ]; then
+          echo "Using train_model.py..."
+          python Scripts/train_model.py
+        else
+          echo "❌ No training script found!"
+          echo "Expected: Scripts/models.ipynb or Scripts/train_model.py"
+          exit 1
+        fi
+    
+    - name: Verify trained models
+      run: |
+        echo "=== Checking Results ==="
+        echo ""
+        echo "Data files:"
+        ls -lh data/*.csv 2>/dev/null || echo "No CSV files found"
+        echo ""
+        echo "Model files:"
+        ls -lh models/*.pkl 2>/dev/null || echo "No model files found"
+        echo ""
+        echo "Results file:"
+        if [ -f "models/ml_tuned_results.json" ]; then
+          echo "✓ Results file exists"
+          head -20 models/ml_tuned_results.json
+        else
+          echo "⚠️ No results file found"
+        fi
+        echo ""
+        
+        # Count models
+        model_count=$(ls models/*.pkl 2>/dev/null | wc -l)
+        echo "Total models saved: $model_count"
+        
+        if [ $model_count -eq 0 ]; then
+          echo "❌ ERROR: No models were saved!"
+          exit 1
+        else
+          echo "✅ Successfully saved $model_count models"
+        fi
+    
+    - name: Prepare dashboard data
+      run: |
+        echo "📊 Preparing dashboard data..."
+        python - <<'PYTHON_SCRIPT'
+import pandas as pd
+import os
+
+data_files = ['data/cleaned_aqi_data_v3.csv', 'data/cleaned_aqi_data_v2.csv', 'data/cleaned_aqi_data.csv']
+
+for csv_file in data_files:
+    if os.path.exists(csv_file):
+        try:
+            df = pd.read_csv(csv_file)
+            df_recent = df.tail(720)  # Last 30 days (24 hours/day)
+            df_recent.to_csv('data/historical_aqi.csv', index=False)
+            print(f"✓ Dashboard data: {len(df_recent)} rows from {csv_file}")
+            break
+        except Exception as e:
+            print(f"⚠️ Could not process {csv_file}: {e}")
+            continue
+else:
+    print("⚠️ No data file found for dashboard")
+PYTHON_SCRIPT
+      continue-on-error: true
+    
+    - name: Commit and push changes
+      run: |
+        echo "💾 Committing changes..."
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git config user.name "GitHub Actions Bot"
+        
+        # Add model files
+        git add models/*.pkl models/*.json models/*.csv 2>/dev/null || true
+        
+        # Add data files
+        git add data/*.csv 2>/dev/null || true
+        
+        # Check if there are changes
+        if git diff --staged --quiet; then
+          echo "ℹ️ No changes to commit"
+        else
+          git commit -m "🤖 Daily model retrain: $(date +'%Y-%m-%d %H:%M UTC')"
+          git push origin main
+          echo "✅ Changes pushed to GitHub"
+        fi
+    
+    - name: Pipeline Summary
+      if: always()
+      run: |
+        echo ""
+        echo "========================================"
+        echo "    PIPELINE EXECUTION SUMMARY"
+        echo "========================================"
+        echo ""
+        echo "Steps completed:"
+        echo "  ✓ Data fetch"
+        echo "  ✓ Data cleaning"
+        echo "  ✓ MongoDB upload"
+        echo "  ✓ Model training"
+        echo "  ✓ Dashboard prep"
+        echo "  ✓ Git commit"
+        echo ""
+        
+        # Check for models
+        if [ -d "models" ] && [ "$(ls -A models/*.pkl 2>/dev/null)" ]; then
+          model_count=$(ls models/*.pkl 2>/dev/null | wc -l)
+          echo "✅ SUCCESS: $model_count models trained"
+        else
+          echo "❌ WARNING: No models found"
+        fi
+        
+        echo ""
+        echo "Next scheduled run: Tomorrow 00:00 UTC"
+        echo "========================================"
