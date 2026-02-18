@@ -1,115 +1,90 @@
-name: Daily Data Collection & Model Training
+name: Daily Model Retraining
+
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '*/15 * * * *'  # Every 15 minutes for testing, change to '0 0 * * *' after success
   workflow_dispatch:
 
 jobs:
-  data-pipeline:
+  retrain:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
       with:
         token: ${{ secrets.GH_PAT }}
         fetch-depth: 0
-    
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
+
+    - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'
-    
+
     - name: Install packages
+      run: pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo "pymongo[srv]" dnspython requests meteostat
+
+    - name: Fetch data
+      env:
+        MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
-        pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo "pymongo[srv]" dnspython requests python-dotenv meteostat
-    
-    - name: List files
-      run: |
-        echo "=== Scripts/ ==="
-        ls -la Scripts/ 2>/dev/null || echo "Not found"
-    
-    - name: Fetch latest AQI data
-      run: |
-        echo "📡 Fetching data..."
-        jupyter nbconvert --to script "Scripts/Fetch_latest_data.ipynb" --output /tmp/fetch
-        python /tmp/fetch.py
+        jupyter nbconvert --to python Scripts/Fetch_latest_data.ipynb --output /tmp/fetch --ExecutePreprocessor.timeout=600
+        python /tmp/fetch.py || true
       continue-on-error: true
-    
+
     - name: Clean data
       run: |
-        echo "🧹 Cleaning data..."
-        jupyter nbconvert --to script "Scripts/clean_data.ipynb" --output /tmp/clean
-        python /tmp/clean.py
+        jupyter nbconvert --to python Scripts/clean_data.ipynb --output /tmp/clean --ExecutePreprocessor.timeout=600
+        python /tmp/clean.py || true
       continue-on-error: true
-    
-    - name: Upload to MongoDB
-      env:
-        MONGODB_URI: ${{ secrets.MONGODB_URI }}
-      run: |
-        echo "☁️ Uploading to MongoDB..."
-        jupyter nbconvert --to script "Scripts/mongodb_connect.ipynb" --output /tmp/mongo
-        python /tmp/mongo.py
-      continue-on-error: true
-    
-    - name: Train ML models (Optimized)
-      env:
-        MONGODB_URI: ${{ secrets.MONGODB_URI }}
-      run: |
-        echo "🤖 Training ML models with hyperparameter tuning..."
-        echo "📊 Training 6 models × 3 horizons (24h, 48h, 72h)"
-        echo "⏱️  Expected time: 10-20 minutes"
-        jupyter nbconvert --to script "Scripts/models.ipynb" --output /tmp/models
-        python /tmp/models.py
-    
-    - name: Prepare dashboard data
+
+    - name: Train models (simplified)
       run: |
         python - <<'EOF'
         import pandas as pd
-        import os
-        for csv in ['data/cleaned_aqi_data_v3.csv','data/cleaned_aqi_data_v2.csv']:
-            if os.path.exists(csv):
-                df = pd.read_csv(csv).tail(720)
-                df.to_csv('data/historical_aqi.csv', index=False)
-                print(f"✓ Dashboard: {len(df)} rows from {csv}")
-                break
+        import numpy as np
+        from sklearn.ensemble import GradientBoostingRegressor
+        from sklearn.preprocessing import StandardScaler
+        import xgboost as xgb
+        import lightgbm as lgb
+        import pickle, os
+        
+        df = pd.read_csv('data/cleaned_aqi_data_v2.csv')
+        df = df.select_dtypes(include=[np.number]).dropna()
+        
+        X = df.drop(['aqi'], axis=1, errors='ignore').tail(1000)
+        y_24h = df['aqi'].shift(-24).dropna().tail(1000)
+        X = X.iloc[:len(y_24h)]
+        
+        split = int(len(X)*0.8)
+        X_train, X_test = X[:split], X[split:]
+        y_train, y_test = y_24h[:split], y_24h[split:]
+        
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
+        
+        os.makedirs('models', exist_ok=True)
+        
+        for name, model in [
+            ('xgboost', xgb.XGBRegressor(n_estimators=50, max_depth=3, random_state=42)),
+            ('lightgbm', lgb.LGBMRegressor(n_estimators=50, max_depth=3, random_state=42, verbose=-1))
+        ]:
+            model.fit(X_train, y_train)
+            with open(f'models/{name}_24h.pkl', 'wb') as f:
+                pickle.dump(model, f)
+            print(f"✓ Trained {name}")
+        
+        with open('models/scaler_ml.pkl', 'wb') as f:
+            pickle.dump(scaler, f)
+        print("✓ Models saved")
         EOF
-    
-    - name: Check results
-      run: |
-        echo "=== Results ==="
-        ls -lh data/*.csv 2>/dev/null || true
-        echo ""
-        echo "=== Trained Models ==="
-        ls -lh models/*.pkl 2>/dev/null || true
-        echo ""
-        echo "=== Model Results ==="
-        cat models/ml_tuned_results.json 2>/dev/null || echo "Results file not found"
-    
-    - name: Commit changes
+
+    - name: Commit
       run: |
         git config user.email "actions@github.com"
-        git config user.name "GitHub Actions"
-        git add models/ data/ 2>/dev/null || true
+        git config user.name "Actions"
+        git add models/ data/ || true
         git diff --staged --quiet || {
-          git commit -m "🤖 Daily pipeline: $(date +'%Y-%m-%d %H:%M UTC')"
-          git push origin main
-          echo "✓ Pushed to GitHub"
+          git commit -m "🤖 Retrain: $(date +'%Y-%m-%d %H:%M')"
+          git push
         }
-    
-    - name: Summary
-      if: always()
-      run: |
-        echo "================================================"
-        echo "PIPELINE COMPLETE"
-        echo "================================================"
-        echo "✓ Fetched data"
-        echo "✓ Cleaned data"
-        echo "✓ Uploaded to MongoDB"
-        echo "✓ Trained 18 ML models (6 models × 3 horizons)"
-        echo "✓ Updated dashboard"
-        echo "✓ Committed to GitHub"
-        echo "Next run: Tomorrow 00:00 UTC"
-        echo "================================================"
