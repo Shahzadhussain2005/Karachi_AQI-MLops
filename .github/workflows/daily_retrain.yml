@@ -64,7 +64,7 @@ jobs:
         jupyter nbconvert --to python models.ipynb --stdout > /tmp/train.py
         python /tmp/train.py || true
         sleep 2
-        test -f models/*.pkl && echo "Models created" && exit 0 || echo "No models" && exit 1
+        if compgen -G "models/*.pkl" > /dev/null; then echo "Models created" && exit 0; else echo "No models" && exit 1; fi
     
     - name: Verify
       run: ls Scripts/models/*.pkl
