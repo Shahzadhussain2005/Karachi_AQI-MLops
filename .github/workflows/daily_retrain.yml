@@ -2,7 +2,7 @@ name: Daily Model Retraining
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Every 15 minutes for testing, change to '0 0 * * *' after success
+    - cron: '*/20 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -14,50 +14,59 @@ jobs:
     - uses: actions/checkout@v4
       with:
         token: ${{ secrets.GH_PAT }}
-        fetch-depth: 0
 
     - uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.12'
 
-    - name: Install packages
-      run: pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo "pymongo[srv]" dnspython requests meteostat
+    - run: pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo "pymongo[srv]" dnspython requests meteostat
 
-    - name: Fetch data
+    - name: Fetch
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
-      run: |
-        jupyter nbconvert --to python Scripts/Fetch_latest_data.ipynb --output /tmp/fetch --ExecutePreprocessor.timeout=600
-        python /tmp/fetch.py || true
+      run: jupyter nbconvert --to python Scripts/Fetch_latest_data.ipynb --stdout | python || true
       continue-on-error: true
 
-    - name: Clean data
-      run: |
-        jupyter nbconvert --to python Scripts/clean_data.ipynb --output /tmp/clean --ExecutePreprocessor.timeout=600
-        python /tmp/clean.py || true
+    - name: Clean
+      run: jupyter nbconvert --to python Scripts/clean_data.ipynb --stdout | python || true
       continue-on-error: true
 
-    - name: Train models (simplified)
+    - name: Train
       run: |
         python - <<'EOF'
-        import pandas as pd
-        import numpy as np
+        import pandas as pd, numpy as np, pickle, os
         from sklearn.ensemble import GradientBoostingRegressor
         from sklearn.preprocessing import StandardScaler
-        import xgboost as xgb
-        import lightgbm as lgb
-        import pickle, os
+        import xgboost as xgb, lightgbm as lgb
         
         df = pd.read_csv('data/cleaned_aqi_data_v2.csv')
-        df = df.select_dtypes(include=[np.number]).dropna()
+        df['time'] = pd.to_datetime(df['time'])
+        df = df.sort_values('time')
         
-        X = df.drop(['aqi'], axis=1, errors='ignore').tail(1000)
-        y_24h = df['aqi'].shift(-24).dropna().tail(1000)
-        X = X.iloc[:len(y_24h)]
+        # Keep only last 2000 rows for speed
+        df = df.tail(2000)
+        
+        # Create target
+        df['aqi_24h'] = df['aqi'].shift(-24)
+        df = df.dropna(subset=['aqi_24h'])
+        
+        # Features: only numeric, exclude target
+        X = df.select_dtypes(include=[np.number]).drop(['aqi_24h'], axis=1, errors='ignore')
+        y = df['aqi_24h']
+        
+        # Remove any NaN
+        mask = ~(X.isna().any(axis=1) | y.isna())
+        X, y = X[mask], y[mask]
+        
+        print(f"Data: {len(X)} rows, {len(X.columns)} features")
+        
+        if len(X) < 100:
+            print("ERROR: Not enough data")
+            exit(1)
         
         split = int(len(X)*0.8)
         X_train, X_test = X[:split], X[split:]
-        y_train, y_test = y_24h[:split], y_24h[split:]
+        y_train, y_test = y[:split], y[split:]
         
         scaler = StandardScaler()
         X_train = scaler.fit_transform(X_train)
@@ -66,25 +75,22 @@ jobs:
         os.makedirs('models', exist_ok=True)
         
         for name, model in [
-            ('xgboost', xgb.XGBRegressor(n_estimators=50, max_depth=3, random_state=42)),
-            ('lightgbm', lgb.LGBMRegressor(n_estimators=50, max_depth=3, random_state=42, verbose=-1))
+            ('xgboost', xgb.XGBRegressor(n_estimators=30, max_depth=3, random_state=42)),
+            ('lightgbm', lgb.LGBMRegressor(n_estimators=30, max_depth=3, random_state=42, verbose=-1))
         ]:
             model.fit(X_train, y_train)
+            score = model.score(X_test, y_test)
             with open(f'models/{name}_24h.pkl', 'wb') as f:
                 pickle.dump(model, f)
-            print(f"✓ Trained {name}")
+            print(f"✓ {name}: R²={score:.3f}")
         
         with open('models/scaler_ml.pkl', 'wb') as f:
             pickle.dump(scaler, f)
-        print("✓ Models saved")
         EOF
 
     - name: Commit
       run: |
-        git config user.email "actions@github.com"
-        git config user.name "Actions"
+        git config user.email "bot@github.com"
+        git config user.name "Bot"
         git add models/ data/ || true
-        git diff --staged --quiet || {
-          git commit -m "🤖 Retrain: $(date +'%Y-%m-%d %H:%M')"
-          git push
-        }
+        git diff --staged --quiet || git commit -m "🤖 $(date +'%Y-%m-%d %H:%M')" && git push || true
