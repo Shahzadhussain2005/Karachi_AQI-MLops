@@ -1,9 +1,9 @@
-name: Daily Model Retraining (CI Only)
+name: Daily Model Retraining
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Daily at midnight UTC
-  workflow_dispatch:  # Manual trigger
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   retrain-models:
@@ -11,185 +11,174 @@ jobs:
     timeout-minutes: 90
     
     steps:
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GH_PAT }}
         fetch-depth: 0
     
-    - name: Set up Python 3.11
+    - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'
     
     - name: Install dependencies
       run: |
         pip install --upgrade pip
-        pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo "pymongo[srv]" dnspython requests python-dotenv meteostat
+        pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo dnspython requests meteostat
     
-    - name: Verify files
+    - name: Verify structure
       run: |
-        echo "=== Repository Structure ==="
+        echo "=== Root directory ==="
         ls -la
         echo ""
-        echo "=== Scripts Directory ==="
-        ls -la Scripts/ 2>/dev/null || echo "Scripts/ not found"
+        echo "=== Scripts directory ==="
+        ls -la Scripts/
         echo ""
-        echo "=== Data Directory ==="
-        ls -la data/ 2>/dev/null || echo "data/ not found"
+        echo "=== Scripts/data ==="
+        ls -la Scripts/data/ 2>/dev/null || echo "No data folder yet"
+        echo ""
+        echo "=== Scripts/models ==="
+        ls -la Scripts/models/ 2>/dev/null || echo "No models folder yet"
     
-    - name: Fetch latest AQI data
+    - name: Fetch latest data
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
-        echo "📡 Fetching latest AQI data..."
-        jupyter nbconvert --to script "Scripts/Fetch_latest_data.ipynb" --output /tmp/fetch --log-level ERROR
-        python /tmp/fetch.py || echo "⚠️ Fetch failed, continuing..."
+        cd Scripts
+        echo "Fetching data..."
+        jupyter nbconvert --to script Fetch_latest_data.ipynb --output /tmp/fetch --log-level ERROR || true
+        python /tmp/fetch.py || echo "Fetch skipped"
       continue-on-error: true
     
-    - name: Clean and prepare data
+    - name: Clean data
       run: |
-        echo "🧹 Cleaning data..."
-        jupyter nbconvert --to script "Scripts/clean_data.ipynb" --output /tmp/clean --log-level ERROR
-        python /tmp/clean.py || echo "⚠️ Clean failed, continuing..."
+        cd Scripts
+        echo "Cleaning data..."
+        jupyter nbconvert --to script clean_data.ipynb --output /tmp/clean --log-level ERROR || true
+        python /tmp/clean.py || echo "Clean skipped"
       continue-on-error: true
     
     - name: Upload to MongoDB
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
-        echo "☁️ Uploading to MongoDB..."
-        if [ -f "Scripts/mongodb_connect.ipynb" ]; then
-          jupyter nbconvert --to script "Scripts/mongodb_connect.ipynb" --output /tmp/mongo --log-level ERROR
-          python /tmp/mongo.py || echo "⚠️ MongoDB upload failed, continuing..."
-        else
-          echo "ℹ️ mongodb_connect.ipynb not found, skipping..."
+        cd Scripts
+        if [ -f "mongodb_connect.ipynb" ]; then
+          echo "Uploading to MongoDB..."
+          jupyter nbconvert --to script mongodb_connect.ipynb --output /tmp/mongo --log-level ERROR || true
+          python /tmp/mongo.py || echo "MongoDB upload skipped"
         fi
       continue-on-error: true
     
-    - name: Train ML models (Optimized)
+    - name: Train ML models
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
-        echo "🤖 Training ML models..."
-        echo "📊 Training 6 models × 3 horizons (24h, 48h, 72h)"
-        echo "⏱️  Expected time: 10-20 minutes"
+        cd Scripts
+        echo "========================================="
+        echo "Training ML models..."
+        echo "Working directory: $(pwd)"
+        echo "Expected time: 10-20 minutes"
+        echo "========================================="
         
-        if [ -f "Scripts/models.ipynb" ]; then
-          echo "Using models.ipynb..."
-          jupyter nbconvert --to script "Scripts/models.ipynb" --output /tmp/train --log-level ERROR
-          python /tmp/train.py
-        elif [ -f "Scripts/train_model.py" ]; then
-          echo "Using train_model.py..."
-          python Scripts/train_model.py
+        # Convert notebook to script
+        jupyter nbconvert --to script models.ipynb --output /tmp/train --log-level ERROR
+        
+        # Run training (stay in Scripts directory so paths work)
+        python /tmp/train.py
+        exit_code=$?
+        
+        if [ $exit_code -eq 0 ]; then
+          echo "✅ Training completed successfully"
         else
-          echo "❌ No training script found!"
-          echo "Expected: Scripts/models.ipynb or Scripts/train_model.py"
-          exit 1
+          echo "❌ Training failed with exit code: $exit_code"
+          exit $exit_code
         fi
     
-    - name: Verify trained models
+    - name: Verify models were created
       run: |
-        echo "=== Checking Results ==="
-        echo ""
-        echo "Data files:"
-        ls -lh data/*.csv 2>/dev/null || echo "No CSV files found"
+        echo "========================================="
+        echo "Verifying trained models..."
+        echo "========================================="
+        
+        if [ ! -d "Scripts/models" ]; then
+          echo "❌ ERROR: Scripts/models/ directory does not exist"
+          exit 1
+        fi
+        
+        model_count=$(ls Scripts/models/*.pkl 2>/dev/null | wc -l)
+        
+        echo "Models found: $model_count"
         echo ""
         echo "Model files:"
-        ls -lh models/*.pkl 2>/dev/null || echo "No model files found"
+        ls -lh Scripts/models/*.pkl 2>/dev/null || echo "No .pkl files"
         echo ""
-        echo "Results file:"
-        if [ -f "models/ml_tuned_results.json" ]; then
-          echo "✓ Results file exists"
-          head -20 models/ml_tuned_results.json
-        else
-          echo "⚠️ No results file found"
-        fi
-        echo ""
-        
-        # Count models
-        model_count=$(ls models/*.pkl 2>/dev/null | wc -l)
-        echo "Total models saved: $model_count"
         
         if [ $model_count -eq 0 ]; then
           echo "❌ ERROR: No models were saved!"
           exit 1
-        else
-          echo "✅ Successfully saved $model_count models"
+        fi
+        
+        echo "✅ SUCCESS: $model_count model files saved"
+        
+        # Show results file
+        if [ -f "Scripts/models/ml_tuned_results.json" ]; then
+          echo ""
+          echo "Results summary:"
+          head -30 Scripts/models/ml_tuned_results.json
         fi
     
-    - name: Prepare dashboard data
+    - name: Prepare dashboard
       run: |
-        echo "📊 Preparing dashboard data..."
-        python - <<'PYTHON_SCRIPT'
-import pandas as pd
-import os
-
-data_files = ['data/cleaned_aqi_data_v3.csv', 'data/cleaned_aqi_data_v2.csv', 'data/cleaned_aqi_data.csv']
-
-for csv_file in data_files:
-    if os.path.exists(csv_file):
-        try:
-            df = pd.read_csv(csv_file)
-            df_recent = df.tail(720)  # Last 30 days (24 hours/day)
-            df_recent.to_csv('data/historical_aqi.csv', index=False)
-            print(f"✓ Dashboard data: {len(df_recent)} rows from {csv_file}")
-            break
-        except Exception as e:
-            print(f"⚠️ Could not process {csv_file}: {e}")
-            continue
-else:
-    print("⚠️ No data file found for dashboard")
-PYTHON_SCRIPT
+        cd Scripts
+        if [ -f "data/cleaned_aqi_data_v2.csv" ]; then
+          tail -720 data/cleaned_aqi_data_v2.csv > data/historical_aqi.csv
+          echo "✓ Dashboard data prepared"
+        else
+          echo "⚠️ No data file found"
+        fi
       continue-on-error: true
     
-    - name: Commit and push changes
+    - name: Commit changes
       run: |
-        echo "💾 Committing changes..."
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git config user.name "GitHub Actions Bot"
         
-        # Add model files
-        git add models/*.pkl models/*.json models/*.csv 2>/dev/null || true
+        # Add Scripts subdirectories
+        git add Scripts/models/ Scripts/data/ 2>/dev/null || true
         
-        # Add data files
-        git add data/*.csv 2>/dev/null || true
-        
-        # Check if there are changes
         if git diff --staged --quiet; then
-          echo "ℹ️ No changes to commit"
+          echo "No changes to commit"
         else
-          git commit -m "🤖 Daily model retrain: $(date +'%Y-%m-%d %H:%M UTC')"
+          timestamp=$(date +'%Y-%m-%d %H:%M UTC')
+          git commit -m "🤖 Daily retrain: $timestamp"
           git push origin main
-          echo "✅ Changes pushed to GitHub"
+          echo "✅ Changes pushed"
         fi
     
-    - name: Pipeline Summary
+    - name: Summary
       if: always()
       run: |
         echo ""
-        echo "========================================"
-        echo "    PIPELINE EXECUTION SUMMARY"
-        echo "========================================"
-        echo ""
-        echo "Steps completed:"
-        echo "  ✓ Data fetch"
-        echo "  ✓ Data cleaning"
-        echo "  ✓ MongoDB upload"
-        echo "  ✓ Model training"
-        echo "  ✓ Dashboard prep"
-        echo "  ✓ Git commit"
-        echo ""
+        echo "========================================="
+        echo "        PIPELINE SUMMARY"
+        echo "========================================="
         
-        # Check for models
-        if [ -d "models" ] && [ "$(ls -A models/*.pkl 2>/dev/null)" ]; then
-          model_count=$(ls models/*.pkl 2>/dev/null | wc -l)
-          echo "✅ SUCCESS: $model_count models trained"
+        if [ -d "Scripts/models" ]; then
+          count=$(ls Scripts/models/*.pkl 2>/dev/null | wc -l)
+          if [ $count -gt 0 ]; then
+            echo "✅ SUCCESS: $count models trained"
+            echo ""
+            echo "Models:"
+            ls -1 Scripts/models/*.pkl 2>/dev/null | head -20
+          else
+            echo "❌ FAILED: No models saved"
+          fi
         else
-          echo "❌ WARNING: No models found"
+          echo "❌ FAILED: Scripts/models/ not found"
         fi
         
         echo ""
-        echo "Next scheduled run: Tomorrow 00:00 UTC"
-        echo "========================================"
+        echo "Next run: Tomorrow 00:00 UTC"
+        echo "========================================="
