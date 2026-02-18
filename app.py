@@ -1,9 +1,3 @@
-"""
-AQI Prediction Dashboard
-========================
-Data: MongoDB Atlas (fallback: data/cleaned_aqi_data_v2.csv)
-Models: Scripts/models/
-"""
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -30,9 +24,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ============================================================================
-# Helper Functions
-# ============================================================================
 
 def get_aqi_category(aqi):
     if aqi <= 50:   return 'Good', '#00e400'
@@ -42,9 +33,6 @@ def get_aqi_category(aqi):
     elif aqi <= 300: return 'Very Unhealthy', '#8f3f97'
     else:            return 'Hazardous', '#7e0023'
 
-# ============================================================================
-# Load Data - MongoDB first, CSV fallback
-# ============================================================================
 
 @st.cache_data(ttl=3600)
 def load_data():
@@ -94,9 +82,6 @@ def load_data():
 
     return None, '❌ No data source available'
 
-# ============================================================================
-# Load Models - from Scripts/models/
-# ============================================================================
 
 @st.cache_resource
 def load_models():
@@ -179,22 +164,27 @@ def load_models():
     horizons_loaded = list(models.keys())
     return models, scaler, f"✅ {model_dir} | Horizons: {horizons_loaded}"
 
-# ============================================================================
-# Sidebar
-# ============================================================================
+
+@st.cache_resource
+def get_shap_explainer(_model):
+    """Create SHAP explainer - cached for performance"""
+    try:
+        import shap
+        explainer = shap.TreeExplainer(_model)
+        return explainer
+    except Exception as e:
+        return None
+
 
 st.sidebar.markdown("# 🌫️ Karachi AQI")
 st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["📊 Dashboard", "🔮 Predictions", "ℹ️ About"],
+    ["📊 Dashboard", "🔮 Predictions", "🔍 SHAP Analysis", "ℹ️ About"],
     label_visibility="collapsed"
 )
 
-# ============================================================================
-# Load everything
-# ============================================================================
 
 data, data_source   = load_data()
 models, scaler, model_status = load_models()
@@ -215,9 +205,6 @@ if models is None:
     st.info("Put your .pkl files in Scripts/models/ and scaler_ml.pkl must be there too.")
     st.stop()
 
-# ============================================================================
-# PAGE 1: Dashboard
-# ============================================================================
 
 if page == "📊 Dashboard":
     st.markdown('<p class="main-header">📊 Karachi AQI Dashboard</p>', unsafe_allow_html=True)
@@ -324,9 +311,6 @@ if page == "📊 Dashboard":
     with col4: st.metric("Good Hours",     f"{(last7['aqi'] <= 50).sum()}")
     with col5: st.metric("Unhealthy Hours",f"{(last7['aqi'] > 150).sum()}")
 
-# ============================================================================
-# PAGE 2: Predictions
-# ============================================================================
 
 elif page == "🔮 Predictions":
     st.markdown('<p class="main-header">🔮 AQI Predictions</p>', unsafe_allow_html=True)
@@ -447,44 +431,166 @@ elif page == "🔮 Predictions":
     else:
         st.error("☢️ Hazardous. Stay indoors. Use N95 masks if necessary.")
 
-# ============================================================================
-# PAGE 3: About
-# ============================================================================
+
+elif page == "🔍 SHAP Analysis":
+    st.markdown('<p class="main-header">🔍 Model Explainability (SHAP)</p>', unsafe_allow_html=True)
+    st.info("📌 Understanding what drives AQI predictions using SHAP (SHapley Additive exPlanations)")
+    
+    try:
+        import shap
+        import matplotlib.pyplot as plt
+        
+        # Select horizon
+        horizon = st.selectbox("Select Prediction Horizon", ['24h', '48h', '72h'])
+        
+        if horizon not in models:
+            st.error(f"Model for {horizon} not available")
+            st.stop()
+        
+        model = models[horizon]
+        
+        # Prepare features
+        exclude = ['time', 'timestamp', 'aqi_24h', 'aqi_48h', 'aqi_72h',
+                   'dominant_pollutant', 'aqi_category', 'aqi_color', 'time_of_day']
+        feat_cols = [c for c in data.columns if c not in exclude]
+        X_full = data[feat_cols].select_dtypes(include=[np.number]).fillna(0)
+        
+        # Align with scaler
+        n_expected = scaler.n_features_in_
+        if X_full.shape[1] < n_expected:
+            padded = np.zeros((len(X_full), n_expected))
+            padded[:, :X_full.shape[1]] = X_full.values
+            X_full = pd.DataFrame(padded)
+        elif X_full.shape[1] > n_expected:
+            X_full = X_full.iloc[:, :n_expected]
+        
+        X_sample = X_full.tail(100).values
+        X_scaled = scaler.transform(X_sample)
+        
+        # Get feature names
+        feature_names = feat_cols[:n_expected] if len(feat_cols) >= n_expected else [f"Feature {i}" for i in range(n_expected)]
+        
+        # Create explainer
+        with st.spinner("Creating SHAP explainer..."):
+            explainer = get_shap_explainer(model)
+        
+        if explainer is None:
+            st.error("❌ SHAP not available. Install: `pip install shap`")
+            st.stop()
+        
+        # Calculate SHAP values
+        with st.spinner("Calculating SHAP values..."):
+            shap_values = explainer.shap_values(X_scaled)
+        
+        st.markdown('<p class="sub-header">Feature Importance (Global)</p>', unsafe_allow_html=True)
+        
+        # Summary plot
+        fig, ax = plt.subplots(figsize=(10, 8))
+        shap.summary_plot(shap_values, X_scaled, feature_names=feature_names, show=False, max_display=15)
+        st.pyplot(fig)
+        plt.close()
+        
+        st.markdown('<p class="sub-header">Top 10 Feature Contributions (Current)</p>', unsafe_allow_html=True)
+        
+        # Latest prediction
+        latest_scaled = X_scaled[-1:, :]
+        shap_values_latest = explainer.shap_values(latest_scaled)
+        
+        # Create impacts dataframe
+        impacts = pd.DataFrame({
+            'Feature': feature_names,
+            'SHAP Value': shap_values_latest[0]
+        })
+        impacts['Abs SHAP'] = np.abs(impacts['SHAP Value'])
+        impacts = impacts.sort_values('Abs SHAP', ascending=False).head(10)
+        
+        # Plot
+        fig = go.Figure()
+        colors = ['#ff4444' if x > 0 else '#4444ff' for x in impacts['SHAP Value']]
+        fig.add_trace(go.Bar(
+            x=impacts['SHAP Value'],
+            y=impacts['Feature'],
+            orientation='h',
+            marker=dict(color=colors),
+            text=[f"{v:.3f}" for v in impacts['SHAP Value']],
+            textposition='outside'
+        ))
+        fig.update_layout(
+            height=400,
+            xaxis_title="SHAP Value (Impact on Prediction)",
+            yaxis_title="Feature",
+            title=f"Top Features Driving {horizon} Prediction"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Explanation
+        st.markdown("""
+        **How to interpret SHAP values:**
+        - **Red bars (positive)**: Feature increases predicted AQI
+        - **Blue bars (negative)**: Feature decreases predicted AQI  
+        - **Longer bars**: Stronger impact on the prediction
+        
+        SHAP helps identify which environmental factors are most important for forecasting air quality.
+        """)
+        
+    except ImportError:
+        st.error("⚠️ SHAP library not installed. Run: `pip install shap`")
+        st.info("Add `shap` and `matplotlib` to your requirements.txt")
+    except Exception as e:
+        st.error(f"❌ SHAP analysis failed: {e}")
 
 elif page == "ℹ️ About":
     st.markdown('<p class="main-header">ℹ️ About This Project</p>', unsafe_allow_html=True)
     st.markdown("""
+    ### 👤 Developer
+    **Shahzad Hussain**  
+    📧 shahzadhussain9680@gmail.com
+    
     ### 🎯 Purpose
-    Real-time Air Quality Index (AQI) predictions for Karachi, Pakistan.
+    Real-time Air Quality Index (AQI) predictions for Karachi, Pakistan using machine learning.
 
     ### 🤖 ML Models
-    - XGBoost, LightGBM, Gradient Boosting, Random Forest, Ridge, Lasso
-    - Trained with GridSearchCV hyperparameter tuning
-    - Models stored in: `Scripts/models/`
+    - **Algorithms**: XGBoost, LightGBM, Gradient Boosting, Random Forest, Ridge, Lasso
+    - **Training**: GridSearchCV/RandomizedSearchCV hyperparameter tuning
+    - **Storage**: `Scripts/models/`
+    - **Explainability**: SHAP analysis for model interpretability
 
-    ### 📊 Data
+    ### 📊 Data Sources
     - **Primary**: MongoDB Atlas (`aqi_feature_store`)
     - **Fallback**: `data/cleaned_aqi_data_v2.csv`
-    - **Update**: Daily via GitHub Actions
+    - **Update Frequency**: Daily via GitHub Actions CI/CD pipeline
 
-    ### 🔮 Predictions
+    ### 🔮 Prediction Horizons
     | Horizon | Description |
     |---------|-------------|
-    | 24h | Next 24 hours |
-    | 48h | Next 48 hours |
-    | 72h | Next 72 hours |
+    | 24h | Air quality forecast for next 24 hours |
+    | 48h | Air quality forecast for next 48 hours |
+    | 72h | Air quality forecast for next 72 hours |
 
-    ### 🚀 Deployment
-    - **Dashboard**: Streamlit
-    - **CI/CD**: GitHub Actions (daily retraining)
-    - **Hosting**: HuggingFace Spaces
+    ### 🚀 Technology Stack
+    - **Frontend**: Streamlit
+    - **ML Framework**: Scikit-learn, XGBoost, LightGBM
+    - **Visualization**: Plotly
+    - **Explainability**: SHAP
+    - **Database**: MongoDB Atlas
+    - **CI/CD**: GitHub Actions (automated daily retraining)
+    - **Hosting**: Streamlit Cloud / HuggingFace Spaces
+    
+    ### 📈 Features
+    - ✅ Real-time AQI monitoring
+    - ✅ Multi-horizon predictions (24h, 48h, 72h)
+    - ✅ Historical trend visualization
+    - ✅ Pollutant and weather tracking
+    - ✅ Health recommendations based on AQI levels
+    - ✅ SHAP-based model explanations
+    - ✅ Automated model retraining pipeline
     """)
 
 # Footer
 st.markdown("---")
 st.markdown(
     f"<div style='text-align:center;color:#666'>"
-    f"Karachi AQI Dashboard | Data: {data_source} | "
+    f"Karachi AQI Dashboard | Developed by Shahzad Hussain | Data: {data_source} | "
     f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     f"</div>",
     unsafe_allow_html=True
