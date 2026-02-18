@@ -27,20 +27,6 @@ jobs:
         pip install --upgrade pip
         pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo dnspython requests meteostat
     
-    - name: Verify structure
-      run: |
-        echo "=== Root directory ==="
-        ls -la
-        echo ""
-        echo "=== Scripts directory ==="
-        ls -la Scripts/
-        echo ""
-        echo "=== Scripts/data ==="
-        ls -la Scripts/data/ 2>/dev/null || echo "No data folder yet"
-        echo ""
-        echo "=== Scripts/models ==="
-        ls -la Scripts/models/ 2>/dev/null || echo "No models folder yet"
-    
     - name: Fetch latest data
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
@@ -82,79 +68,57 @@ jobs:
         echo "Expected time: 10-20 minutes"
         echo "========================================="
         
-        # Convert notebook to script
-        jupyter nbconvert --to script models.ipynb --output /tmp/train --log-level ERROR
+        # Convert notebook to script WITHOUT metadata
+        jupyter nbconvert --to python models.ipynb --output /tmp/train --TemplateExporter.exclude_input_prompt=True --log-level ERROR
         
-        # Run training (stay in Scripts directory so paths work)
+        # Run training
         python /tmp/train.py
         exit_code=$?
         
         if [ $exit_code -eq 0 ]; then
-          echo "✅ Training completed successfully"
+          echo "✅ Training completed"
         else
           echo "❌ Training failed with exit code: $exit_code"
           exit $exit_code
         fi
     
-    - name: Verify models were created
+    - name: Verify models
       run: |
         echo "========================================="
-        echo "Verifying trained models..."
+        echo "Verifying models..."
         echo "========================================="
         
         if [ ! -d "Scripts/models" ]; then
-          echo "❌ ERROR: Scripts/models/ directory does not exist"
+          echo "❌ ERROR: Scripts/models/ not found"
           exit 1
         fi
         
         model_count=$(ls Scripts/models/*.pkl 2>/dev/null | wc -l)
         
         echo "Models found: $model_count"
-        echo ""
-        echo "Model files:"
         ls -lh Scripts/models/*.pkl 2>/dev/null || echo "No .pkl files"
-        echo ""
         
         if [ $model_count -eq 0 ]; then
-          echo "❌ ERROR: No models were saved!"
+          echo "❌ ERROR: No models saved"
           exit 1
         fi
         
-        echo "✅ SUCCESS: $model_count model files saved"
-        
-        # Show results file
-        if [ -f "Scripts/models/ml_tuned_results.json" ]; then
-          echo ""
-          echo "Results summary:"
-          head -30 Scripts/models/ml_tuned_results.json
-        fi
+        echo "✅ SUCCESS: $model_count models saved"
     
-    - name: Prepare dashboard
-      run: |
-        cd Scripts
-        if [ -f "data/cleaned_aqi_data_v2.csv" ]; then
-          tail -720 data/cleaned_aqi_data_v2.csv > data/historical_aqi.csv
-          echo "✓ Dashboard data prepared"
-        else
-          echo "⚠️ No data file found"
-        fi
-      continue-on-error: true
-    
-    - name: Commit changes
+    - name: Commit models
       run: |
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git config user.name "GitHub Actions Bot"
         
-        # Add Scripts subdirectories
+        # Add models and data
         git add Scripts/models/ Scripts/data/ 2>/dev/null || true
         
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
-          timestamp=$(date +'%Y-%m-%d %H:%M UTC')
-          git commit -m "🤖 Daily retrain: $timestamp"
+          git commit -m "🤖 Models retrained: $(date +'%Y-%m-%d %H:%M UTC')"
           git push origin main
-          echo "✅ Changes pushed"
+          echo "✅ Models pushed to GitHub"
         fi
     
     - name: Summary
@@ -162,23 +126,14 @@ jobs:
       run: |
         echo ""
         echo "========================================="
-        echo "        PIPELINE SUMMARY"
+        echo "   TRAINING COMPLETE"
         echo "========================================="
-        
         if [ -d "Scripts/models" ]; then
           count=$(ls Scripts/models/*.pkl 2>/dev/null | wc -l)
-          if [ $count -gt 0 ]; then
-            echo "✅ SUCCESS: $count models trained"
-            echo ""
-            echo "Models:"
-            ls -1 Scripts/models/*.pkl 2>/dev/null | head -20
-          else
-            echo "❌ FAILED: No models saved"
-          fi
-        else
-          echo "❌ FAILED: Scripts/models/ not found"
+          echo "Models saved: $count"
+          ls Scripts/models/*.pkl 2>/dev/null | xargs -n1 basename
         fi
-        
         echo ""
-        echo "Next run: Tomorrow 00:00 UTC"
+        echo "Your app.py can now use these models!"
+        echo "Deploy app.py to Render/Railway/etc"
         echo "========================================="
