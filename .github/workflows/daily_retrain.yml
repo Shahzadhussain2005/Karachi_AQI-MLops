@@ -35,38 +35,43 @@ jobs:
       run: |
         python - <<'EOF'
         import pandas as pd, numpy as np, pickle, os
-        from sklearn.ensemble import GradientBoostingRegressor
         from sklearn.preprocessing import StandardScaler
         import xgboost as xgb, lightgbm as lgb
         
         df = pd.read_csv('data/cleaned_aqi_data_v2.csv')
-        df['time'] = pd.to_datetime(df['time'])
-        df = df.sort_values('time')
+        print(f"Loaded: {len(df)} rows, {len(df.columns)} cols")
         
-        # Keep only last 2000 rows for speed
-        df = df.tail(2000)
+        # Fill ALL missing values first
+        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
         
-        # Create target
-        df['aqi_24h'] = df['aqi'].shift(-24)
-        df = df.dropna(subset=['aqi_24h'])
+        # Keep numeric only
+        numeric_df = df.select_dtypes(include=[np.number])
+        print(f"Numeric: {len(numeric_df.columns)} cols")
         
-        # Features: only numeric, exclude target
-        X = df.select_dtypes(include=[np.number]).drop(['aqi_24h'], axis=1, errors='ignore')
-        y = df['aqi_24h']
+        # Must have 'aqi' column
+        if 'aqi' not in numeric_df.columns:
+            print("ERROR: No 'aqi' column")
+            exit(1)
         
-        # Remove any NaN
-        mask = ~(X.isna().any(axis=1) | y.isna())
-        X, y = X[mask], y[mask]
+        # Create target - use last 1500 rows only
+        data = numeric_df.tail(1500).copy()
+        data['target'] = data['aqi'].shift(-24)
         
-        print(f"Data: {len(X)} rows, {len(X.columns)} features")
+        # Drop last 24 rows (no target)
+        data = data[:-24]
+        
+        X = data.drop(['target'], axis=1)
+        y = data['target']
+        
+        print(f"Final: {len(X)} rows, {len(X.columns)} features")
         
         if len(X) < 100:
-            print("ERROR: Not enough data")
+            print("ERROR: Not enough data after processing")
             exit(1)
         
         split = int(len(X)*0.8)
-        X_train, X_test = X[:split], X[split:]
-        y_train, y_test = y[:split], y[split:]
+        X_train, X_test = X.iloc[:split], X.iloc[split:]
+        y_train, y_test = y.iloc[:split], y.iloc[split:]
         
         scaler = StandardScaler()
         X_train = scaler.fit_transform(X_train)
@@ -86,11 +91,12 @@ jobs:
         
         with open('models/scaler_ml.pkl', 'wb') as f:
             pickle.dump(scaler, f)
+        print("✓ All models saved")
         EOF
 
     - name: Commit
       run: |
         git config user.email "bot@github.com"
         git config user.name "Bot"
-        git add models/ data/ || true
+        git add models/ || true
         git diff --staged --quiet || git commit -m "🤖 $(date +'%Y-%m-%d %H:%M')" && git push || true
