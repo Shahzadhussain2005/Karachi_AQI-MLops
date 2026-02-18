@@ -25,29 +25,25 @@ jobs:
     - name: Install dependencies
       run: pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo dnspython requests meteostat
     
+    - name: List files
+      run: |
+        echo "Files in Scripts:"
+        ls -la Scripts/
+    
     - name: Fetch data
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
         cd Scripts
-        ls -la | head -20
-        if [ -f "Fetch_latest_data.ipynb" ]; then
-          jupyter nbconvert --to script "Fetch_latest_data.ipynb" --output /tmp/fetch.py --log-level ERROR
-        elif [ -f "Fetch_latest_data" ]; then
-          jupyter nbconvert --to script "Fetch_latest_data" --output /tmp/fetch.py --log-level ERROR
-        fi
-        python /tmp/fetch.py 2>&1 || true
+        jupyter nbconvert --to python Fetch_latest_data.ipynb --stdout > /tmp/fetch.py 2>/dev/null || true
+        python /tmp/fetch.py || true
       continue-on-error: true
     
     - name: Clean data
       run: |
         cd Scripts
-        if [ -f "clean_data.ipynb" ]; then
-          jupyter nbconvert --to script "clean_data.ipynb" --output /tmp/clean.py --log-level ERROR
-        elif [ -f "clean_data" ]; then
-          jupyter nbconvert --to script "clean_data" --output /tmp/clean.py --log-level ERROR
-        fi
-        python /tmp/clean.py 2>&1 || true
+        jupyter nbconvert --to python clean_data.ipynb --stdout > /tmp/clean.py 2>/dev/null || true
+        python /tmp/clean.py || true
       continue-on-error: true
     
     - name: Upload to MongoDB
@@ -55,12 +51,8 @@ jobs:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
         cd Scripts
-        if [ -f "mongodb_connect.ipynb" ]; then
-          jupyter nbconvert --to script "mongodb_connect.ipynb" --output /tmp/mongo.py --log-level ERROR
-        elif [ -f "mongodb_connect" ]; then
-          jupyter nbconvert --to script "mongodb_connect" --output /tmp/mongo.py --log-level ERROR
-        fi
-        python /tmp/mongo.py 2>&1 || true
+        jupyter nbconvert --to python mongodb_connect.ipynb --stdout > /tmp/mongo.py 2>/dev/null || true
+        python /tmp/mongo.py || true
       continue-on-error: true
     
     - name: Train models
@@ -68,50 +60,22 @@ jobs:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
         cd Scripts
-        echo "========================================="
-        echo "Training models - takes 10-20 minutes"
-        echo "========================================="
-        
-        if [ -f "models.ipynb" ]; then
-          jupyter nbconvert --to script "models.ipynb" --output /tmp/train.py --log-level ERROR
-        elif [ -f "models" ]; then
-          jupyter nbconvert --to script "models" --output /tmp/train.py --log-level ERROR
-        fi
-        
-        python /tmp/train.py 2>&1 || true
-        
-        sleep 3
-        
-        if ls models/*.pkl 1>/dev/null 2>&1; then
-          model_count=$(ls models/*.pkl 2>/dev/null | wc -l)
-          echo ""
-          echo "========================================="
-          echo "SUCCESS: $model_count models created!"
-          echo "========================================="
-          exit 0
-        else
-          echo ""
-          echo "========================================="
-          echo "FAILED: No models found"
-          echo "========================================="
-          exit 1
-        fi
+        echo "Training models..."
+        jupyter nbconvert --to python models.ipynb --stdout > /tmp/train.py
+        python /tmp/train.py || true
+        sleep 2
+        test -f models/*.pkl && echo "Models created" && exit 0 || echo "No models" && exit 1
     
     - name: Verify
-      run: |
-        test -d Scripts/models || exit 1
-        count=$(ls Scripts/models/*.pkl 2>/dev/null | wc -l)
-        test $count -gt 0 || exit 1
-        echo "Verified $count models"
+      run: ls Scripts/models/*.pkl
     
     - name: Commit
       run: |
         git config user.email "bot@github.com"
         git config user.name "Bot"
         git add Scripts/models/ Scripts/data/ || true
-        git diff --staged --quiet || git commit -m "Models $(date +%Y%m%d)" && git push || true
+        git diff --staged --quiet || git commit -m "Models $(date +%Y%m%d%H%M)" && git push || true
     
     - name: Summary
       if: always()
-      run: |
-        test -d Scripts/models && ls Scripts/models/*.pkl 2>/dev/null | wc -l | xargs echo "Models:" || echo "No models"
+      run: ls Scripts/models/*.pkl 2>/dev/null | wc -l | xargs echo "Models saved:"
