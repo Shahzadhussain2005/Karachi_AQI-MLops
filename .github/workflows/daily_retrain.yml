@@ -30,14 +30,14 @@ jobs:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
         cd Scripts
-        jupyter nbconvert --to script Fetch_latest_data --output /tmp/fetch.py --log-level ERROR 2>/dev/null || true
+        jupyter nbconvert --to script "Fetch_latest_data.ipynb" --output /tmp/fetch.py --log-level ERROR 2>/dev/null || true
         python /tmp/fetch.py 2>&1 || true
       continue-on-error: true
     
     - name: Clean data
       run: |
         cd Scripts
-        jupyter nbconvert --to script clean_data --output /tmp/clean.py --log-level ERROR 2>/dev/null || true
+        jupyter nbconvert --to script "clean_data.ipynb" --output /tmp/clean.py --log-level ERROR 2>/dev/null || true
         python /tmp/clean.py 2>&1 || true
       continue-on-error: true
     
@@ -46,7 +46,7 @@ jobs:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
         cd Scripts
-        test -f mongodb_connect && jupyter nbconvert --to script mongodb_connect --output /tmp/mongo.py --log-level ERROR 2>/dev/null && python /tmp/mongo.py 2>&1 || true
+        test -f "mongodb_connect.ipynb" && jupyter nbconvert --to script "mongodb_connect.ipynb" --output /tmp/mongo.py --log-level ERROR 2>/dev/null && python /tmp/mongo.py 2>&1 || true
       continue-on-error: true
     
     - name: Train models
@@ -54,17 +54,32 @@ jobs:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
         cd Scripts
-        echo "Training models - this takes 10-20 minutes..."
-        jupyter nbconvert --to script models --output /tmp/train.py --log-level ERROR
+        echo "========================================="
+        echo "Training models - takes 10-20 minutes"
+        echo "========================================="
+        
+        # Convert notebook
+        jupyter nbconvert --to script "models.ipynb" --output /tmp/train.py --log-level ERROR
+        
+        # Run training - IGNORE exit code
         python /tmp/train.py 2>&1 || true
         
-        sleep 2
+        # Wait for filesystem
+        sleep 3
         
+        # Check if models were actually created
         if ls models/*.pkl 1>/dev/null 2>&1; then
-          echo "SUCCESS - Models created"
+          model_count=$(ls models/*.pkl 2>/dev/null | wc -l)
+          echo ""
+          echo "========================================="
+          echo "SUCCESS: $model_count models created!"
+          echo "========================================="
           exit 0
         else
-          echo "FAILED - No models found"
+          echo ""
+          echo "========================================="
+          echo "FAILED: No models found"
+          echo "========================================="
           exit 1
         fi
     
