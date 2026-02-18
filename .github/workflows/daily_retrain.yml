@@ -61,7 +61,7 @@ jobs:
       run: |
         cd Scripts
         echo "Training models..."
-        jupyter nbconvert --to python models.ipynb --stdout > /tmp/train.py
+        jupyter nbconvert --to python train_models.ipynb --stdout > /tmp/train.py
         python /tmp/train.py || true
         sleep 2
         if compgen -G "models/*.pkl" > /dev/null; then echo "Models created" && exit 0; else echo "No models" && exit 1; fi
