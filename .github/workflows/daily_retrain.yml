@@ -6,76 +6,135 @@ on:
   workflow_dispatch:
 
 jobs:
-  retrain-models:
+  retrain:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 45
     
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
       with:
         token: ${{ secrets.GH_PAT }}
-        fetch-depth: 0
     
-    - name: Setup Python
-      uses: actions/setup-python@v5
+    - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
     
-    - name: Install dependencies
-      run: pip install jupyter nbconvert pandas numpy scikit-learn xgboost lightgbm pymongo dnspython requests meteostat
+    - name: Install
+      run: pip install pandas numpy scikit-learn xgboost lightgbm pymongo dnspython requests meteostat
     
-    - name: List files
-      run: |
-        echo "Files in Scripts:"
-        ls -la Scripts/
-    
-    - name: Fetch data
+    - name: Train (Fast)
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
-        cd Scripts
-        jupyter nbconvert --to python Fetch_latest_data.ipynb --stdout > /tmp/fetch.py 2>/dev/null || true
-        python /tmp/fetch.py || true
-      continue-on-error: true
+        python - <<'EOF'
+        import pandas as pd
+        import numpy as np
+        import pickle
+        import json
+        import os
+        from sklearn.preprocessing import RobustScaler
+        import xgboost as xgb
+        import lightgbm as lgb
+        
+        print("Loading data...")
+        df = pd.read_csv('data/cleaned_aqi_data_v2.csv')
+        df['time'] = pd.to_datetime(df['time'])
+        df = df.sort_values('time').tail(2000)  # Last 2000 rows only
+        
+        print("Preparing features...")
+        numeric_df = df.select_dtypes(include=[np.number]).fillna(0)
+        
+        # Targets
+        numeric_df['y24'] = numeric_df['aqi'].shift(-24)
+        numeric_df['y48'] = numeric_df['aqi'].shift(-48)
+        numeric_df['y72'] = numeric_df['aqi'].shift(-72)
+        numeric_df = numeric_df.dropna(subset=['y24','y48','y72'])
+        
+        X = numeric_df.drop(['y24','y48','y72'], axis=1)
+        y24, y48, y72 = numeric_df['y24'], numeric_df['y48'], numeric_df['y72']
+        
+        print(f"Data: {len(X)} rows, {len(X.columns)} features")
+        
+        # Split
+        split = int(len(X)*0.8)
+        X_train, X_test = X[:split], X[split:]
+        y24_train, y24_test = y24[:split], y24[split:]
+        y48_train, y48_test = y48[:split], y48[split:]
+        y72_train, y72_test = y72[:split], y72[split:]
+        
+        # Scale
+        scaler = RobustScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
+        
+        os.makedirs('models', exist_ok=True)
+        
+        # Train FAST models 
+        for horizon, y_tr, y_te in [('24h',y24_train,y24_test), ('48h',y48_train,y48_test), ('72h',y72_train,y72_test)]:
+            print(f"Training {horizon}...")
+            
+            # XGBoost - FAST settings
+            xgb_model = xgb.XGBRegressor(
+                n_estimators=50,      # Reduced from 100
+                max_depth=3,          # Reduced from 5
+                learning_rate=0.1,
+                random_state=42,
+                n_jobs=-1
+            )
+            xgb_model.fit(X_train, y_tr)
+            xgb_score = xgb_model.score(X_test, y_te)
+            
+            # LightGBM - FAST settings
+            lgb_model = lgb.LGBMRegressor(
+                n_estimators=50,
+                max_depth=3,
+                learning_rate=0.1,
+                random_state=42,
+                verbose=-1,
+                n_jobs=-1
+            )
+            lgb_model.fit(X_train, y_tr)
+            lgb_score = lgb_model.score(X_test, y_te)
+            
+            # Use best
+            if xgb_score > lgb_score:
+                best_model, best_name, best_score = xgb_model, 'xgboost', xgb_score
+            else:
+                best_model, best_name, best_score = lgb_model, 'lightgbm', lgb_score
+            
+            with open(f'models/{best_name}_{horizon}.pkl', 'wb') as f:
+                pickle.dump(best_model, f)
+            
+            print(f"  {best_name}: R²={best_score:.3f}")
+        
+        # Save scaler and features
+        with open('models/scaler_ml.pkl', 'wb') as f:
+            pickle.dump(scaler, f)
+        
+        with open('models/feature_names.json', 'w') as f:
+            json.dump(list(X.columns), f)
+        
+        print(f"Done! Saved {scaler.n_features_in_} features")
+        EOF
     
-    - name: Clean data
+    - name: Verify models
       run: |
-        cd Scripts
-        jupyter nbconvert --to python clean_data.ipynb --stdout > /tmp/clean.py 2>/dev/null || true
-        python /tmp/clean.py || true
-      continue-on-error: true
-    
-    - name: Upload to MongoDB
-      env:
-        MONGODB_URI: ${{ secrets.MONGODB_URI }}
-      run: |
-        cd Scripts
-        jupyter nbconvert --to python mongodb_connect.ipynb --stdout > /tmp/mongo.py 2>/dev/null || true
-        python /tmp/mongo.py || true
-      continue-on-error: true
-    
-    - name: Train models
-      env:
-        MONGODB_URI: ${{ secrets.MONGODB_URI }}
-      run: |
-        cd Scripts
-        echo "Training models..."
-        jupyter nbconvert --to python train_models.ipynb --stdout > /tmp/train.py
-        python /tmp/train.py || true
-        sleep 2
-        if compgen -G "models/*.pkl" > /dev/null; then echo "Models created" && exit 0; else echo "No models" && exit 1; fi
-    
-    - name: Verify
-      run: ls Scripts/models/*.pkl
+        echo "Models created:"
+        ls -lh models/*.pkl
     
     - name: Commit
       run: |
-        git config user.email "bot@github.com"
-        git config user.name "Bot"
-        git add Scripts/models/ Scripts/data/ || true
-        git diff --staged --quiet || git commit -m "Models $(date +%Y%m%d%H%M)" && git push || true
+        git config user.email "actions@github.com"
+        git config user.name "Actions Bot"
+        git add models/
+        git diff --staged --quiet || {
+          git commit -m "🤖 Retrain $(date +'%Y-%m-%d')"
+          git push
+        }
     
     - name: Summary
       if: always()
-      run: ls Scripts/models/*.pkl 2>/dev/null | wc -l | xargs echo "Models saved:"
+      run: |
+        echo "=== Summary ==="
+        ls models/*.pkl 2>/dev/null | wc -l | xargs echo "Models:"
+        du -sh models/ 2>/dev/null || echo "No models"
