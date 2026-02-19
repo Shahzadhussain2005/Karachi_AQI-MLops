@@ -1,23 +1,32 @@
 {
   "24h": {
-    "xgboost": -0.1300218744966819,
-    "lightgbm": -0.07316269106372264,
-    "gradient_boosting": -0.11582902596757427,
-    "best": "lightgbm",
-    "best_score": -0.07316269106372264
+    "model": "xgboost",
+    "R2": 0.0017190343423830745,
+    "params": {
+      "subsample": 0.8,
+      "n_estimators": 200,
+      "max_depth": 3,
+      "learning_rate": 0.01,
+      "colsample_bytree": 0.8
+    }
   },
   "48h": {
-    "xgboost": -0.20462264809571473,
-    "lightgbm": -0.13113525650532187,
-    "gradient_boosting": -0.2984403626417309,
-    "best": "lightgbm",
-    "best_score": -0.13113525650532187
+    "model": "lightgbm",
+    "R2": 0.029765658054975663,
+    "params": {
+      "subsample": 0.8,
+      "num_leaves": 63,
+      "n_estimators": 200,
+      "max_depth": 3,
+      "learning_rate": 0.01
+    }
   },
   "72h": {
-    "xgboost": -0.11142968292600641,
-    "lightgbm": -0.1003447905890269,
-    "gradient_boosting": -0.2751309621119491,
-    "best": "lightgbm",
-    "best_score": -0.1003447905890269
+    "model": "ridge",
+    "R2": 0.03610095045974504,
+    "params": {
+      "alpha": 100.0,
+      "solver": "saga"
+    }
   }
 }
