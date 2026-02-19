@@ -22,7 +22,7 @@ jobs:
     - name: Install
       run: pip install pandas numpy scikit-learn xgboost lightgbm pymongo dnspython
     
-    - name: Train with Feature Engineering
+    - name: Train
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
@@ -39,10 +39,9 @@ jobs:
         from sklearn.ensemble import GradientBoostingRegressor
         
         print("="*70)
-        print("TRAINING WITH PROPER FEATURE ENGINEERING")
+        print("TRAINING")
         print("="*70)
         
-        # Load data
         print("\n1. Loading data...")
         try:
             from pymongo import MongoClient
@@ -56,11 +55,9 @@ jobs:
             df = pd.read_csv('data/cleaned_aqi_data_v2.csv')
             print(f"   ✓ CSV: {len(df)} rows")
         
-        # Sort by time
         df['time'] = pd.to_datetime(df.get('time', df.get('timestamp')))
         df = df.sort_values('time').reset_index(drop=True)
         
-        # Feature engineering (KEEP THIS - it improves R²)
         print("\n2. Engineering features...")
         
         # Lag features
@@ -81,8 +78,10 @@ jobs:
         df['y48'] = df['aqi'].shift(-48)
         df['y72'] = df['aqi'].shift(-72)
         
-        # Remove invalid rows
+        # Remove rows with missing targets
         df = df.dropna(subset=['y24','y48','y72'])
+        
+        print(f"   ✓ After engineering: {len(df)} rows")
         
         # Get numeric features
         exclude = ['time', 'timestamp', 'y24', 'y48', 'y72', 
@@ -92,29 +91,41 @@ jobs:
         feature_cols = [c for c in df.columns if c not in exclude]
         numeric_cols = df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
         
-        X = df[numeric_cols].fillna(df[numeric_cols].mean())
+        # CRITICAL FIX: Fill NaN BEFORE feature selection
+        X = df[numeric_cols].copy()
+        
+        # Remove columns with >30% missing
+        missing_pct = X.isnull().sum() / len(X)
+        good_cols = missing_pct[missing_pct < 0.3].index.tolist()
+        X = X[good_cols]
+        
+        # Fill remaining NaN with mean
+        X = X.fillna(X.mean())
+        
+        # Final check
+        if X.isnull().any().any():
+            print("   ⚠️ Still has NaN, filling with 0")
+            X = X.fillna(0)
+        
         y24, y48, y72 = df['y24'], df['y48'], df['y72']
         
-        print(f"   ✓ Features before selection: {len(X.columns)}")
+        print(f"   ✓ Features: {len(X.columns)}")
+        print(f"   ✓ NaN check: {X.isnull().sum().sum()} (should be 0)")
         
-        # Feature selection (IMPORTANT - keeps R² high)
-        print("\n3. Selecting best 30 features...")
+        print("\n3. Selecting features...")
         selector = SelectKBest(score_func=mutual_info_regression, k=min(30, len(X.columns)))
         selector.fit(X, y24)
         selected_features = X.columns[selector.get_support()].tolist()
         X = X[selected_features]
         
-        print(f"   ✓ Selected: {len(selected_features)} features")
-        print(f"   Top 5: {selected_features[:5]}")
+        print(f"   ✓ Selected: {len(selected_features)}")
         
-        # Split (time-series aware)
+        # Split
         split = int(len(X) * 0.8)
-        X_train, X_test = X[:split], X[split:]
-        y24_train, y24_test = y24[:split], y24[split:]
-        y48_train, y48_test = y48[:split], y48[split:]
-        y72_train, y72_test = y72[:split], y72[split:]
-        
-        print(f"   ✓ Train: {len(X_train)}, Test: {len(X_test)}")
+        X_train, X_test = X.iloc[:split], X.iloc[split:]
+        y24_train, y24_test = y24.iloc[:split], y24.iloc[split:]
+        y48_train, y48_test = y48.iloc[:split], y48.iloc[split:]
+        y72_train, y72_test = y72.iloc[:split], y72.iloc[split:]
         
         # Scale
         scaler = RobustScaler()
@@ -123,8 +134,7 @@ jobs:
         
         os.makedirs('models', exist_ok=True)
         
-        # Train models (BETTER settings for good R²)
-        print("\n4. Training models...")
+        print("\n4. Training...")
         
         for horizon, y_tr, y_te in [
             ('24h', y24_train, y24_test),
@@ -133,95 +143,44 @@ jobs:
         ]:
             print(f"\n   {horizon}:")
             
-            # XGBoost (balanced settings)
-            xgb_model = xgb.XGBRegressor(
-                n_estimators=100,       # Keep 100 for good performance
-                max_depth=5,            # Restore depth
-                learning_rate=0.1,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                random_state=42,
-                n_jobs=-1
-            )
+            xgb_model = xgb.XGBRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, subsample=0.8, random_state=42, n_jobs=-1)
             xgb_model.fit(X_train_scaled, y_tr)
             xgb_score = xgb_model.score(X_test_scaled, y_te)
             
-            # LightGBM
-            lgb_model = lgb.LGBMRegressor(
-                n_estimators=100,
-                max_depth=5,
-                learning_rate=0.1,
-                num_leaves=31,
-                random_state=42,
-                verbose=-1,
-                n_jobs=-1
-            )
+            lgb_model = lgb.LGBMRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, num_leaves=31, random_state=42, verbose=-1, n_jobs=-1)
             lgb_model.fit(X_train_scaled, y_tr)
             lgb_score = lgb_model.score(X_test_scaled, y_te)
             
-            # Gradient Boosting (often best for this data)
-            gb_model = GradientBoostingRegressor(
-                n_estimators=100,
-                max_depth=5,
-                learning_rate=0.1,
-                subsample=0.8,
-                random_state=42
-            )
+            gb_model = GradientBoostingRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, subsample=0.8, random_state=42)
             gb_model.fit(X_train_scaled, y_tr)
             gb_score = gb_model.score(X_test_scaled, y_te)
             
-            # Pick best
-            scores = [
-                (xgb_model, 'xgboost', xgb_score),
-                (lgb_model, 'lightgbm', lgb_score),
-                (gb_model, 'gradient_boosting', gb_score)
-            ]
+            scores = [(xgb_model, 'xgboost', xgb_score), (lgb_model, 'lightgbm', lgb_score), (gb_model, 'gradient_boosting', gb_score)]
             best_model, best_name, best_score = max(scores, key=lambda x: x[2])
             
-            # Save
             with open(f'models/{best_name}_{horizon}.pkl', 'wb') as f:
                 pickle.dump(best_model, f)
             
-            print(f"      XGBoost: R²={xgb_score:.3f}")
-            print(f"      LightGBM: R²={lgb_score:.3f}")
-            print(f"      GradBoost: R²={gb_score:.3f}")
+            print(f"      XGB: {xgb_score:.3f} | LGB: {lgb_score:.3f} | GB: {gb_score:.3f}")
             print(f"      ✓ Best: {best_name} (R²={best_score:.3f})")
         
-        # Save scaler and features
         with open('models/scaler_ml.pkl', 'wb') as f:
             pickle.dump(scaler, f)
         
         with open('models/feature_names.json', 'w') as f:
             json.dump(selected_features, f)
         
-        with open('models/training_info.json', 'w') as f:
-            json.dump({
-                'n_features': len(selected_features),
-                'n_samples': len(X),
-                'features': selected_features
-            }, f, indent=2)
-        
         print("\n" + "="*70)
-        print("✅ TRAINING COMPLETE!")
-        print("="*70)
+        print("✅ DONE!")
         print(f"Features: {len(selected_features)}")
-        print(f"Models saved in models/")
         EOF
     
     - name: Verify
-      run: |
-        echo "=== Models Created ==="
-        ls -lh models/*.pkl
-        echo ""
-        echo "=== Training Info ==="
-        cat models/training_info.json
+      run: ls -lh models/*.pkl
     
     - name: Commit
       run: |
-        git config user.email "actions@github.com"
-        git config user.name "Actions Bot"
+        git config user.email "bot@github.com"
+        git config user.name "Bot"
         git add models/
-        git diff --staged --quiet || {
-          git commit -m "🤖 Daily retrain $(date +'%Y-%m-%d %H:%M UTC')"
-          git push
-        }
+        git diff --staged --quiet || git commit -m "🤖 $(date +'%Y-%m-%d')" && git push
