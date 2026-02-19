@@ -22,7 +22,7 @@ jobs:
     - name: Install
       run: pip install pandas numpy scikit-learn xgboost lightgbm pymongo dnspython
     
-    - name: Train
+    - name: Train Best Models
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
       run: |
@@ -33,14 +33,17 @@ jobs:
         import json
         import os
         from sklearn.preprocessing import RobustScaler
+        from sklearn.feature_selection import SelectKBest, mutual_info_regression
+        from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit
+        from sklearn.linear_model import Ridge
         import xgboost as xgb
         import lightgbm as lgb
-        from sklearn.ensemble import GradientBoostingRegressor
         
         print("="*70)
-        print("TRAINING MODELS")
+        print("TRAINING: XGBoost(24h) + LightGBM(48h) + Ridge(72h)")
         print("="*70)
         
+        # Load
         print("\n1. Loading...")
         try:
             from pymongo import MongoClient
@@ -57,16 +60,15 @@ jobs:
         df['time'] = pd.to_datetime(df.get('time', df.get('timestamp')))
         df = df.sort_values('time').reset_index(drop=True)
         
+        # Feature engineering
         print("\n2. Feature engineering...")
         
-        # Lag features - CRITICAL for time series
         for lag in [1, 2, 3, 6, 12, 24, 48]:
             if 'aqi' in df.columns:
                 df[f'aqi_lag_{lag}h'] = df['aqi'].shift(lag)
             if 'pm2_5' in df.columns:
                 df[f'pm25_lag_{lag}h'] = df['pm2_5'].shift(lag)
         
-        # Rolling features
         for window in [3, 6, 12, 24]:
             if 'aqi' in df.columns:
                 df[f'aqi_ma_{window}h'] = df['aqi'].rolling(window=window, min_periods=1).mean()
@@ -74,20 +76,21 @@ jobs:
                 df[f'aqi_min_{window}h'] = df['aqi'].rolling(window=window, min_periods=1).min()
                 df[f'aqi_max_{window}h'] = df['aqi'].rolling(window=window, min_periods=1).max()
         
-        # Difference features
         if 'aqi' in df.columns:
             df['aqi_diff_1h'] = df['aqi'].diff(1)
             df['aqi_diff_3h'] = df['aqi'].diff(3)
             df['aqi_diff_24h'] = df['aqi'].diff(24)
         
-        # Targets for EACH horizon
+        if 'hour' in df.columns:
+            df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
+            df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
+        
         df['y24'] = df['aqi'].shift(-24)
         df['y48'] = df['aqi'].shift(-48)
         df['y72'] = df['aqi'].shift(-72)
-        
         df = df.dropna(subset=['y24','y48','y72'])
         
-        print(f"   ✓ Rows after engineering: {len(df)}")
+        print(f"   ✓ Rows: {len(df)}")
         
         # Prepare features
         exclude = ['time', 'timestamp', 'y24', 'y48', 'y72',
@@ -98,30 +101,29 @@ jobs:
         numeric_cols = df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
         
         X = df[numeric_cols].copy()
-        
-        # Handle missing values properly
         missing_pct = X.isnull().sum() / len(X)
         good_cols = missing_pct[missing_pct < 0.3].index.tolist()
         X = X[good_cols].fillna(X[good_cols].mean()).fillna(0)
         
-        y24 = df['y24']
-        y48 = df['y48']
-        y72 = df['y72']
+        y24, y48, y72 = df['y24'], df['y48'], df['y72']
         
         print(f"   ✓ Features: {len(X.columns)}")
-        print(f"   ✓ Top features: {list(X.columns)[:5]}")
         
-        # NO FEATURE SELECTION - use all features
-        # This often works better for different horizons
+        # Feature selection
+        print("\n3. Selecting best 30 features...")
+        selector = SelectKBest(score_func=mutual_info_regression, k=min(30, len(X.columns)))
+        selector.fit(X, y24)
+        selected_features = X.columns[selector.get_support()].tolist()
+        X = X[selected_features]
         
-        # Split (time-series aware - CRITICAL)
+        print(f"   ✓ Selected: {len(selected_features)}")
+        
+        # Split
         split = int(len(X) * 0.8)
         X_train, X_test = X.iloc[:split], X.iloc[split:]
         y24_train, y24_test = y24.iloc[:split], y24.iloc[split:]
         y48_train, y48_test = y48.iloc[:split], y48.iloc[split:]
         y72_train, y72_test = y72.iloc[:split], y72.iloc[split:]
-        
-        print(f"   ✓ Train: {len(X_train)}, Test: {len(X_test)}")
         
         # Scale
         scaler = RobustScaler()
@@ -130,93 +132,118 @@ jobs:
         
         os.makedirs('models', exist_ok=True)
         
-        print("\n3. Training (3 models per horizon)...")
+        # Time series CV
+        tscv = TimeSeriesSplit(n_splits=2)
         
         results = {}
         
-        for horizon, y_tr, y_te in [
-            ('24h', y24_train, y24_test),
-            ('48h', y48_train, y48_test),
-            ('72h', y72_train, y72_test)
-        ]:
-            print(f"\n   {horizon}:")
-            
-            # XGBoost
-            xgb_model = xgb.XGBRegressor(
-                n_estimators=150,
-                max_depth=6,
-                learning_rate=0.05,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                min_child_weight=3,
-                random_state=42,
-                n_jobs=-1
-            )
-            xgb_model.fit(X_train_scaled, y_tr)
-            xgb_score = xgb_model.score(X_test_scaled, y_te)
-            
-            # LightGBM
-            lgb_model = lgb.LGBMRegressor(
-                n_estimators=150,
-                max_depth=6,
-                learning_rate=0.05,
-                num_leaves=31,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                min_child_samples=10,
-                random_state=42,
-                verbose=-1,
-                n_jobs=-1
-            )
-            lgb_model.fit(X_train_scaled, y_tr)
-            lgb_score = lgb_model.score(X_test_scaled, y_te)
-            
-            # Gradient Boosting
-            gb_model = GradientBoostingRegressor(
-                n_estimators=150,
-                max_depth=5,
-                learning_rate=0.05,
-                subsample=0.8,
-                min_samples_split=10,
-                random_state=42
-            )
-            gb_model.fit(X_train_scaled, y_tr)
-            gb_score = gb_model.score(X_test_scaled, y_te)
-            
-            # Pick best
-            scores = [
-                (xgb_model, 'xgboost', xgb_score),
-                (lgb_model, 'lightgbm', lgb_score),
-                (gb_model, 'gradient_boosting', gb_score)
-            ]
-            best_model, best_name, best_score = max(scores, key=lambda x: x[2])
-            
-            # Save
-            with open(f'models/{best_name}_{horizon}.pkl', 'wb') as f:
-                pickle.dump(best_model, f)
-            
-            results[horizon] = {
-                'xgboost': xgb_score,
-                'lightgbm': lgb_score,
-                'gradient_boosting': gb_score,
-                'best': best_name,
-                'best_score': best_score
-            }
-            
-            print(f"      XGBoost:      R²={xgb_score:.3f}")
-            print(f"      LightGBM:     R²={lgb_score:.3f}")
-            print(f"      GradBoost:    R²={gb_score:.3f}")
-            print(f"      ✓ Best: {best_name} (R²={best_score:.3f})")
-            
-            if best_score < 0:
-                print(f"      ⚠️  Negative R² - model worse than baseline!")
+        # ============================================================
+        # 24h: XGBoost with hyperparameter tuning
+        # ============================================================
+        print("\n4. Training 24h: XGBoost (with tuning)...")
+        
+        xgb_params = {
+            'n_estimators': [50, 100, 200],
+            'max_depth': [3, 5, 7],
+            'learning_rate': [0.01, 0.05, 0.1],
+            'subsample': [0.8, 1.0],
+            'colsample_bytree': [0.8, 1.0]
+        }
+        
+        xgb_search = RandomizedSearchCV(
+            xgb.XGBRegressor(random_state=42, n_jobs=-1),
+            xgb_params,
+            n_iter=10,
+            cv=tscv,
+            scoring='r2',
+            n_jobs=-1,
+            random_state=42
+        )
+        xgb_search.fit(X_train_scaled, y24_train)
+        xgb_model = xgb_search.best_estimator_
+        xgb_score = xgb_model.score(X_test_scaled, y24_test)
+        
+        with open('models/xgboost_24h.pkl', 'wb') as f:
+            pickle.dump(xgb_model, f)
+        
+        results['24h'] = {'model': 'xgboost', 'R2': xgb_score, 'params': xgb_search.best_params_}
+        
+        print(f"   Best params: {xgb_search.best_params_}")
+        print(f"   CV R²: {xgb_search.best_score_:.3f}")
+        print(f"   Test R²: {xgb_score:.3f}")
+        
+        # ============================================================
+        # 48h: LightGBM with hyperparameter tuning
+        # ============================================================
+        print("\n5. Training 48h: LightGBM (with tuning)...")
+        
+        lgb_params = {
+            'n_estimators': [50, 100, 200],
+            'max_depth': [3, 5, 7],
+            'learning_rate': [0.01, 0.05, 0.1],
+            'num_leaves': [31, 63],
+            'subsample': [0.8, 1.0]
+        }
+        
+        lgb_search = RandomizedSearchCV(
+            lgb.LGBMRegressor(random_state=42, verbose=-1, n_jobs=-1),
+            lgb_params,
+            n_iter=10,
+            cv=tscv,
+            scoring='r2',
+            n_jobs=-1,
+            random_state=42
+        )
+        lgb_search.fit(X_train_scaled, y48_train)
+        lgb_model = lgb_search.best_estimator_
+        lgb_score = lgb_model.score(X_test_scaled, y48_test)
+        
+        with open('models/lightgbm_48h.pkl', 'wb') as f:
+            pickle.dump(lgb_model, f)
+        
+        results['48h'] = {'model': 'lightgbm', 'R2': lgb_score, 'params': lgb_search.best_params_}
+        
+        print(f"   Best params: {lgb_search.best_params_}")
+        print(f"   CV R²: {lgb_search.best_score_:.3f}")
+        print(f"   Test R²: {lgb_score:.3f}")
+        
+        # ============================================================
+        # 72h: Ridge with hyperparameter tuning
+        # ============================================================
+        print("\n6. Training 72h: Ridge (with tuning)...")
+        
+        ridge_params = {
+            'alpha': [0.1, 1.0, 10.0, 100.0],
+            'solver': ['auto', 'svd', 'saga']
+        }
+        
+        from sklearn.model_selection import GridSearchCV
+        ridge_search = GridSearchCV(
+            Ridge(),
+            ridge_params,
+            cv=tscv,
+            scoring='r2',
+            n_jobs=-1
+        )
+        ridge_search.fit(X_train_scaled, y72_train)
+        ridge_model = ridge_search.best_estimator_
+        ridge_score = ridge_model.score(X_test_scaled, y72_test)
+        
+        with open('models/ridge_72h.pkl', 'wb') as f:
+            pickle.dump(ridge_model, f)
+        
+        results['72h'] = {'model': 'ridge', 'R2': ridge_score, 'params': ridge_search.best_params_}
+        
+        print(f"   Best params: {ridge_search.best_params_}")
+        print(f"   CV R²: {ridge_search.best_score_:.3f}")
+        print(f"   Test R²: {ridge_score:.3f}")
         
         # Save artifacts
         with open('models/scaler_ml.pkl', 'wb') as f:
             pickle.dump(scaler, f)
         
         with open('models/feature_names.json', 'w') as f:
-            json.dump(list(X.columns), f)
+            json.dump(selected_features, f)
         
         with open('models/results.json', 'w') as f:
             json.dump(results, f, indent=2)
@@ -224,18 +251,11 @@ jobs:
         print("\n" + "="*70)
         print("✅ TRAINING COMPLETE!")
         print("="*70)
-        print(f"\nFeatures used: {len(X.columns)}")
-        print(f"\nBest models:")
-        for h, r in results.items():
-            print(f"  {h}: {r['best']} (R²={r['best_score']:.3f})")
-        
-        # Check for problems
-        if any(r['best_score'] < 0 for r in results.values()):
-            print("\n⚠️  WARNING: Some models have negative R²")
-            print("This usually means:")
-            print("  - Not enough training data")
-            print("  - Features don't predict well")
-            print("  - Need more feature engineering")
+        print(f"\nResults:")
+        print(f"  24h: XGBoost    (R²={xgb_score:.3f})")
+        print(f"  48h: LightGBM   (R²={lgb_score:.3f})")
+        print(f"  72h: Ridge      (R²={ridge_score:.3f})")
+        print(f"\nFeatures: {len(selected_features)}")
         EOF
     
     - name: Show results
@@ -251,4 +271,4 @@ jobs:
         git config user.email "bot@github.com"
         git config user.name "Bot"
         git add models/
-        git diff --staged --quiet || git commit -m "🤖 Retrain $(date +'%Y-%m-%d')" && git push
+        git diff --staged --quiet || git commit -m "🚀 Best models $(date +'%Y-%m-%d')" && git push
