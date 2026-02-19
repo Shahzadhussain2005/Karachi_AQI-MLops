@@ -1,0 +1,23 @@
+{
+  "24h": {
+    "xgboost": -0.1300218744966819,
+    "lightgbm": -0.07316269106372264,
+    "gradient_boosting": -0.11582902596757427,
+    "best": "lightgbm",
+    "best_score": -0.07316269106372264
+  },
+  "48h": {
+    "xgboost": -0.20462264809571473,
+    "lightgbm": -0.13113525650532187,
+    "gradient_boosting": -0.2984403626417309,
+    "best": "lightgbm",
+    "best_score": -0.13113525650532187
+  },
+  "72h": {
+    "xgboost": -0.11142968292600641,
+    "lightgbm": -0.1003447905890269,
+    "gradient_boosting": -0.2751309621119491,
+    "best": "lightgbm",
+    "best_score": -0.1003447905890269
+  }
+}
