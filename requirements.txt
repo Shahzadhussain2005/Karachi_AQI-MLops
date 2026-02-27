@@ -10,3 +10,4 @@ dnspython
 requests
 python-dotenv
 shap
+matplotlib
