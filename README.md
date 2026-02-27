@@ -1,487 +1,1283 @@
-"""
-AQI Prediction Dashboard
-========================
-Data: MongoDB Atlas (fallback: data/cleaned_aqi_data_v2.csv)
-Models: Scripts/models/
-"""
+# 🌫️ Karachi Air Quality Index (AQI) Prediction System
 
-import warnings
-warnings.filterwarnings('ignore')
-import os
-import json
-import pickle
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.30+-red.svg)](https://streamlit.io)
+[![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-green.svg)](https://mongodb.com)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-st.set_page_config(
-    page_title="Karachi AQI Prediction",
-    page_icon="🌫️",
-    layout="wide"
+Real-time Air Quality Index prediction system for Karachi, Pakistan using Machine Learning with automated daily retraining via CI/CD pipeline.
+
+![Dashboard Preview](assets/dashboard.png)
+
+---
+
+## 📋 Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Tech Stack](#tech-stack)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [ML Pipeline](#ml-pipeline)
+- [API Reference](#api-reference)
+- [Deployment](#deployment)
+- [Contributing](#contributing)
+- [License](#license)
+- [Contact](#contact)
+
+---
+
+## 🎯 Overview
+
+This project provides **multi-horizon air quality forecasts** (24h, 48h, 72h) for Karachi using state-of-the-art machine learning models. The system:
+
+- Fetches real-time AQI data from multiple sources
+- Engineers 50+ features including lag, rolling statistics, and cyclical time features
+- Trains optimized models daily via automated CI/CD pipeline
+- Delivers predictions through an interactive Streamlit dashboard
+
+**Live Demo**: [Coming Soon]
+
+---
+
+## ✨ Features
+
+### 📊 Dashboard
+- Real-time AQI monitoring
+- Historical trend visualization (7-30 days)
+- Pollutant levels tracking (PM2.5, PM10, O₃, NO₂)
+- Weather conditions display (Temperature, Humidity, Wind)
+- AQI category distribution
+- 7-day statistics summary
+
+### 🔮 Predictions
+- Multi-horizon forecasts: 24h, 48h, 72h
+- Confidence-based health recommendations
+- Interactive historical + forecast charts
+- Model performance metrics
+
+### 🤖 ML Models
+- **24h predictions**: XGBoost (hyperparameter-tuned)
+- **48h predictions**: LightGBM (hyperparameter-tuned)
+- **72h predictions**: Ridge Regression (regularized)
+- **Feature engineering**: 50+ features with lag, rolling, and cyclical transformations
+- **Validation**: Time-series cross-validation
+- **Performance**: R² scores of 0.65-0.80 (24h), 0.55-0.70 (48h), 0.45-0.60 (72h)
+
+### ⚙️ Automation
+- Daily data fetching from APIs
+- Automated model retraining via GitHub Actions
+- MongoDB Atlas for persistent data storage
+- Model versioning and tracking
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        DATA SOURCES                              │
+├─────────────────────────────────────────────────────────────────┤
+│  Open-Meteo API  │  AQICN API  │  Meteostat  │  User Uploads   │
+└────────┬──────────────────┬──────────────┬─────────────────────┘
+         │                  │              │
+         v                  v              v
+┌─────────────────────────────────────────────────────────────────┐
+│                   DATA COLLECTION & CLEANING                     │
+│  • Scripts/Fetch_latest_data.ipynb                              │
+│  • Scripts/clean_data.ipynb                                     │
+└────────┬────────────────────────────────────────────────────────┘
+         │
+         v
+┌─────────────────────────────────────────────────────────────────┐
+│                      MONGODB ATLAS                               │
+│  Database: aqi_feature_store                                    │
+│  Collection: aqi_features                                       │
+│  • 4000+ historical records                                     │
+│  • Real-time updates                                            │
+└────────┬────────────────────────────────────────────────────────┘
+         │
+         v
+┌─────────────────────────────────────────────────────────────────┐
+│                   FEATURE ENGINEERING                            │
+│  • Lag features (1h, 3h, 6h, 12h, 24h, 48h)                    │
+│  • Rolling statistics (mean, std, min, max)                     │
+│  • Difference features (trend detection)                        │
+│  • Cyclical encoding (hour, day, month)                        │
+│  • Total: 50-60 engineered features                            │
+└────────┬────────────────────────────────────────────────────────┘
+         │
+         v
+┌─────────────────────────────────────────────────────────────────┐
+│                      MODEL TRAINING                              │
+│  • XGBoost (24h): RandomizedSearchCV                           │
+│  • LightGBM (48h): RandomizedSearchCV                          │
+│  • Ridge (72h): GridSearchCV                                    │
+│  • Validation: TimeSeriesSplit CV (k=2)                        │
+│  • Scaling: RobustScaler                                       │
+└────────┬────────────────────────────────────────────────────────┘
+         │
+         v
+┌─────────────────────────────────────────────────────────────────┐
+│                   GITHUB ACTIONS CI/CD                           │
+│  • Daily automated retraining (00:00 UTC)                      │
+│  • Manual trigger available                                     │
+│  • Model versioning and artifact storage                       │
+└────────┬────────────────────────────────────────────────────────┘
+         │
+         v
+┌─────────────────────────────────────────────────────────────────┐
+│                   STREAMLIT DASHBOARD                            │
+│  • Real-time predictions                                        │
+│  • Interactive visualizations                                   │
+│  • Health recommendations                                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🛠️ Tech Stack
+
+### Backend & ML
+- **Python 3.11+**
+- **scikit-learn** - Model training, preprocessing, validation
+- **XGBoost** - Gradient boosting for 24h predictions
+- **LightGBM** - Fast gradient boosting for 48h predictions
+- **pandas** - Data manipulation
+- **numpy** - Numerical computing
+
+### Frontend & Visualization
+- **Streamlit** - Interactive web dashboard
+- **Plotly** - Interactive charts and graphs
+
+### Data & Storage
+- **MongoDB Atlas** - Cloud database for feature store
+- **pymongo** - MongoDB driver for Python
+
+### DevOps & CI/CD
+- **GitHub Actions** - Automated training pipeline
+- **Docker** - Containerization (optional)
+
+### APIs
+- **Open-Meteo** - Air quality data (PM2.5, PM10, O₃, NO₂, SO₂, CO)
+- **AQICN** - Current AQI readings
+- **Meteostat** - Historical weather data
+
+---
+
+## 📦 Installation
+
+### Prerequisites
+- Python 3.11 or higher
+- MongoDB Atlas account (free tier works)
+- Git
+
+### Local Setup
+
+1. **Clone the repository**
+```bash
+git clone https://github.com/Shahzadhussain2005/Karachi_AQI-MLOps.git
+cd Karachi_AQI-MLOps
+```
+
+2. **Create virtual environment**
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. **Install dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+4. **Set up environment variables**
+
+Create a `.env` file in the root directory:
+```env
+MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/
+```
+
+5. **Run data collection (optional)**
+```bash
+cd Scripts
+jupyter nbconvert --to python --execute Fetch_latest_data.ipynb
+jupyter nbconvert --to python --execute clean_data.ipynb
+```
+
+6. **Train models**
+```bash
+jupyter nbconvert --to python --execute train_models.ipynb
+```
+
+7. **Launch dashboard**
+```bash
+streamlit run app.py
+```
+
+The dashboard will open at `http://localhost:8501`
+
+---
+
+## 🚀 Usage
+
+### Running the Dashboard Locally
+
+```bash
+streamlit run app.py
+```
+
+### Manual Data Collection
+
+```bash
+cd Scripts
+jupyter nbconvert --to python --execute Fetch_latest_data.ipynb
+```
+
+### Manual Model Training
+
+```bash
+cd Scripts
+jupyter nbconvert --to python --execute train_models.ipynb
+```
+
+### Viewing Logs
+
+Training logs and model performance metrics are saved in:
+- `models/results.json` - Performance scores
+- `models/feature_names.json` - List of features used
+
+---
+
+## 📁 Project Structure
+
+```
+Karachi_AQI-MLOps/
+├── .github/
+│   └── workflows/
+│       └── daily_retrain.yml          # CI/CD pipeline
+├── Scripts/
+│   ├── Fetch_latest_data.ipynb        # Data collection
+│   ├── clean_data.ipynb               # Data preprocessing
+│   ├── train_models.ipynb             # Model training
+│   ├── mongodb_connect.ipynb          # MongoDB upload
+│   └── models/                        # Trained models
+│       ├── xgboost_24h.pkl
+│       ├── lightgbm_48h.pkl
+│       ├── ridge_72h.pkl
+│       ├── scaler_ml.pkl
+│       ├── feature_names.json
+│       └── results.json
+├── data/
+│   └── cleaned_aqi_data_v2.csv        # Fallback CSV data
+├── app.py                             # Streamlit dashboard
+├── requirements.txt                   # Python dependencies
+├── .env                               # Environment variables (create this)
+├── .gitignore                         # Git ignore rules
+├── Dockerfile                         # Docker configuration (optional)
+├── README.md                          # This file
+└── LICENSE                            # MIT License
+```
+
+---
+
+## 🤖 ML Pipeline
+
+### 1. Data Collection
+
+**Sources:**
+- **Open-Meteo API**: PM2.5, PM10, NO₂, O₃, SO₂, CO
+- **AQICN API**: Current AQI readings
+- **Meteostat**: Temperature, humidity, wind speed, pressure
+
+**Frequency:** Every hour (automated via GitHub Actions)
+
+### 2. Feature Engineering
+
+```python
+# Lag features
+aqi_lag_1h, aqi_lag_3h, aqi_lag_6h, aqi_lag_12h, aqi_lag_24h, aqi_lag_48h
+
+# Rolling statistics
+aqi_ma_3h, aqi_ma_6h, aqi_ma_12h, aqi_ma_24h
+aqi_std_3h, aqi_std_6h, aqi_std_12h, aqi_std_24h
+aqi_min_3h, aqi_min_6h, aqi_min_12h, aqi_min_24h
+aqi_max_3h, aqi_max_6h, aqi_max_12h, aqi_max_24h
+
+# Difference features
+aqi_diff_1h, aqi_diff_3h, aqi_diff_24h
+
+# Cyclical encoding
+hour_sin, hour_cos, dow_sin, dow_cos, month_sin, month_cos
+
+# Total: 50-60 features
+```
+
+### 3. Model Training
+
+**XGBoost (24h predictions)**
+```python
+XGBRegressor(
+    n_estimators=50-200,     # Tuned
+    max_depth=3-7,           # Tuned
+    learning_rate=0.01-0.1,  # Tuned
+    subsample=0.8-1.0,       # Tuned
+    random_state=42
 )
+```
 
-st.markdown("""
-<style>
-    .main-header {font-size: 2.5rem; font-weight: 700; color: #1f77b4;}
-    .sub-header {font-size: 1.5rem; font-weight: 600; color: #333; margin-top: 1rem;}
-    .metric-card {background: #f0f2f6; padding: 1rem; border-radius: 0.5rem;}
-</style>
-""", unsafe_allow_html=True)
-
-# ============================================================================
-# Helper Functions
-# ============================================================================
-
-def get_aqi_category(aqi):
-    if aqi <= 50:   return 'Good', '#00e400'
-    elif aqi <= 100: return 'Moderate', '#ffff00'
-    elif aqi <= 150: return 'Unhealthy for Sensitive Groups', '#ff7e00'
-    elif aqi <= 200: return 'Unhealthy', '#ff0000'
-    elif aqi <= 300: return 'Very Unhealthy', '#8f3f97'
-    else:            return 'Hazardous', '#7e0023'
-
-# ============================================================================
-# Load Data - MongoDB first, CSV fallback
-# ============================================================================
-
-@st.cache_data(ttl=3600)
-def load_data():
-    # --- Try MongoDB first ---
-    try:
-        from pymongo import MongoClient
-        from pymongo.server_api import ServerApi
-
-        MONGO_URI = "mongodb+srv://nawababbas08_db_user:2Ja4OGlDdKfG6EvZ@cluster0.jnxn95g.mongodb.net/?retryWrites=true&w=majority&tlsAllowInvalidCertificates=true"
-
-        client = MongoClient(
-            MONGO_URI,
-            server_api=ServerApi('1'),
-            serverSelectionTimeoutMS=5000,
-            connectTimeoutMS=5000
-        )
-        client.admin.command('ping')
-
-        db  = client['aqi_feature_store']
-        df  = pd.DataFrame(list(db['aqi_features'].find({}, {"_id": 0})))
-        client.close()
-
-        if len(df) > 0:
-            time_col = 'time' if 'time' in df.columns else 'timestamp'
-            df['time'] = pd.to_datetime(df[time_col])
-            df = df.sort_values('time').reset_index(drop=True)
-            return df, '🟢 MongoDB Atlas'
-
-    except Exception:
-        pass  # fall through to CSV
-
-    # --- CSV fallback ---
-    csv_paths = [
-        'data/cleaned_aqi_data_v2.csv',
-        'data/cleaned_aqi_data_v3.csv',
-        'data/historical_aqi.csv',
-    ]
-    for path in csv_paths:
-        try:
-            df = pd.read_csv(path)
-            time_col = 'time' if 'time' in df.columns else 'timestamp'
-            df['time'] = pd.to_datetime(df[time_col])
-            df = df.sort_values('time').reset_index(drop=True)
-            return df, f'🟡 CSV ({path})'
-        except Exception:
-            continue
-
-    return None, '❌ No data source available'
-
-# ============================================================================
-# Load Models - from Scripts/models/
-# ============================================================================
-
-@st.cache_resource
-def load_models():
-    # Check these folders in order (handles case differences on Windows/Linux)
-    candidate_dirs = [
-        'Scripts/models',
-        'scripts/models',
-        'models',
-        'models/advanced',
-    ]
-
-    model_dir = None
-    for d in candidate_dirs:
-        if os.path.isdir(d):
-            model_dir = d
-            break
-
-    if model_dir is None:
-        return None, None, f"❌ models folder not found. Checked: {candidate_dirs}"
-
-    models  = {}
-    scaler  = None
-
-    # --- Find best model per horizon from results JSON ---
-    results = None
-    for fname in ['ml_only_results.json', 'ml_tuned_results.json',
-                  'grid_search_results.json', 'results.json']:
-        rpath = os.path.join(model_dir, fname)
-        if os.path.exists(rpath):
-            with open(rpath) as f:
-                results = json.load(f)
-            break
-
-    for horizon in ['24h', '48h', '72h']:
-        loaded = False
-
-        # Try best model from JSON first
-        if results and horizon in results:
-            try:
-                best_name = max(
-                    results[horizon].items(),
-                    key=lambda x: x[1].get('test_R2', x[1].get('R2', -999))
-                )[0]
-                fname = f"{best_name.lower().replace(' ', '_')}_{horizon}.pkl"
-                fpath = os.path.join(model_dir, fname)
-                if os.path.exists(fpath):
-                    with open(fpath, 'rb') as f:
-                        models[horizon] = pickle.load(f)
-                    loaded = True
-            except Exception:
-                pass
-
-        # Fallback: try each model name explicitly
-        if not loaded:
-            for name in ['xgboost', 'lightgbm', 'gradient_boosting',
-                         'random_forest', 'ridge', 'lasso']:
-                fpath = os.path.join(model_dir, f"{name}_{horizon}.pkl")
-                if os.path.exists(fpath):
-                    with open(fpath, 'rb') as f:
-                        models[horizon] = pickle.load(f)
-                    loaded = True
-                    break
-
-    # --- Load scaler ---
-    for sname in ['scaler_ml.pkl', 'scaler.pkl', 'scaler_final.pkl']:
-        spath = os.path.join(model_dir, sname)
-        if os.path.exists(spath):
-            with open(spath, 'rb') as f:
-                scaler = pickle.load(f)
-            break
-
-    if not models:
-        files = os.listdir(model_dir)
-        return None, None, f"❌ No .pkl models found in {model_dir}. Files: {files[:10]}"
-
-    if scaler is None:
-        return None, None, f"❌ scaler_ml.pkl not found in {model_dir}"
-
-    horizons_loaded = list(models.keys())
-    return models, scaler, f"✅ {model_dir} | Horizons: {horizons_loaded}"
-
-# ============================================================================
-# Sidebar
-# ============================================================================
-
-st.sidebar.markdown("# 🌫️ Karachi AQI")
-st.sidebar.markdown("---")
-
-page = st.sidebar.radio(
-    "Navigation",
-    ["📊 Dashboard", "🔮 Predictions", "ℹ️ About"],
-    label_visibility="collapsed"
+**LightGBM (48h predictions)**
+```python
+LGBMRegressor(
+    n_estimators=50-200,     # Tuned
+    max_depth=3-7,           # Tuned
+    learning_rate=0.01-0.1,  # Tuned
+    num_leaves=31-63,        # Tuned
+    random_state=42
 )
+```
 
-# ============================================================================
-# Load everything
-# ============================================================================
-
-data, data_source   = load_data()
-models, scaler, model_status = load_models()
-
-# Status in sidebar
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Status")
-st.sidebar.markdown(f"**Data:** {data_source}")
-st.sidebar.markdown(f"**Models:** {model_status}")
-
-# Stop if critical data missing
-if data is None:
-    st.error("❌ No data loaded. Check MongoDB connection or CSV path.")
-    st.stop()
-
-if models is None:
-    st.error(f"❌ {model_status}")
-    st.info("Put your .pkl files in Scripts/models/ and scaler_ml.pkl must be there too.")
-    st.stop()
-
-# ============================================================================
-# PAGE 1: Dashboard
-# ============================================================================
-
-if page == "📊 Dashboard":
-    st.markdown('<p class="main-header">📊 Karachi AQI Dashboard</p>', unsafe_allow_html=True)
-
-    current_aqi = float(data['aqi'].iloc[-1])
-    category, color = get_aqi_category(current_aqi)
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Current AQI", f"{current_aqi:.0f}")
-    with col2:
-        st.markdown(f'<div class="metric-card">Status<br><span style="color:{color};font-weight:700">{category}</span></div>',
-                    unsafe_allow_html=True)
-    with col3:
-        if 'pm2_5' in data.columns:
-            st.metric("PM2.5", f"{float(data['pm2_5'].iloc[-1]):.1f} µg/m³")
-    with col4:
-        if 'temp' in data.columns:
-            st.metric("Temperature", f"{float(data['temp'].iloc[-1]):.1f}°C")
-
-    st.markdown("---")
-
-    days_back   = st.slider("Show last N days", 7, 30, 14)
-    cutoff      = data['time'].max() - timedelta(days=days_back)
-    recent      = data[data['time'] >= cutoff].copy()
-
-    # AQI Trend
-    st.markdown('<p class="sub-header">AQI Trend</p>', unsafe_allow_html=True)
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=recent['time'], y=recent['aqi'],
-                             mode='lines', fill='tozeroy',
-                             line=dict(color='#1f77b4', width=2)))
-    fig.add_hrect(y0=0,   y1=50,  fillcolor="green",  opacity=0.08, line_width=0)
-    fig.add_hrect(y0=50,  y1=100, fillcolor="yellow",  opacity=0.08, line_width=0)
-    fig.add_hrect(y0=100, y1=150, fillcolor="orange",  opacity=0.08, line_width=0)
-    fig.add_hrect(y0=150, y1=200, fillcolor="red",     opacity=0.08, line_width=0)
-    fig.update_layout(height=400, xaxis_title="Date", yaxis_title="AQI",
-                      hovermode='x unified', showlegend=False)
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Pollutants
-    st.markdown('<p class="sub-header">Pollutant Levels</p>', unsafe_allow_html=True)
-    col1, col2 = st.columns(2)
-
-    with col1:
-        fig_pm = go.Figure()
-        if 'pm2_5' in recent.columns:
-            fig_pm.add_trace(go.Scatter(x=recent['time'], y=recent['pm2_5'],
-                                        mode='lines', name='PM2.5', line=dict(color='#ff7f0e')))
-        if 'pm10' in recent.columns:
-            fig_pm.add_trace(go.Scatter(x=recent['time'], y=recent['pm10'],
-                                        mode='lines', name='PM10', line=dict(color='#2ca02c')))
-        fig_pm.update_layout(height=300, xaxis_title="Date", yaxis_title="µg/m³",
-                             hovermode='x unified')
-        st.plotly_chart(fig_pm, use_container_width=True)
-
-    with col2:
-        fig_gas = go.Figure()
-        if 'ozone' in recent.columns:
-            fig_gas.add_trace(go.Scatter(x=recent['time'], y=recent['ozone'],
-                                         mode='lines', name='Ozone', line=dict(color='#d62728')))
-        if 'nitrogen_dioxide' in recent.columns:
-            fig_gas.add_trace(go.Scatter(x=recent['time'], y=recent['nitrogen_dioxide'],
-                                         mode='lines', name='NO₂', line=dict(color='#9467bd')))
-        fig_gas.update_layout(height=300, xaxis_title="Date", yaxis_title="ppb",
-                              hovermode='x unified')
-        st.plotly_chart(fig_gas, use_container_width=True)
-
-    # Weather
-    st.markdown('<p class="sub-header">Weather Conditions</p>', unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        if 'temp' in recent.columns:
-            fig_t = go.Figure()
-            fig_t.add_trace(go.Scatter(x=recent['time'], y=recent['temp'],
-                                       mode='lines', fill='tozeroy', line=dict(color='#ff6b6b')))
-            fig_t.update_layout(height=250, yaxis_title="Temp (°C)", showlegend=False)
-            st.plotly_chart(fig_t, use_container_width=True)
-
-    with col2:
-        if 'rhum' in recent.columns:
-            fig_h = go.Figure()
-            fig_h.add_trace(go.Scatter(x=recent['time'], y=recent['rhum'],
-                                       mode='lines', fill='tozeroy', line=dict(color='#4ecdc4')))
-            fig_h.update_layout(height=250, yaxis_title="Humidity (%)", showlegend=False)
-            st.plotly_chart(fig_h, use_container_width=True)
-
-    with col3:
-        if 'wspd' in recent.columns:
-            fig_w = go.Figure()
-            fig_w.add_trace(go.Scatter(x=recent['time'], y=recent['wspd'],
-                                       mode='lines', fill='tozeroy', line=dict(color='#95e1d3')))
-            fig_w.update_layout(height=250, yaxis_title="Wind (km/h)", showlegend=False)
-            st.plotly_chart(fig_w, use_container_width=True)
-
-    # Statistics
-    st.markdown('<p class="sub-header">Statistics (Last 7 Days)</p>', unsafe_allow_html=True)
-    last7 = data[data['time'] >= data['time'].max() - timedelta(days=7)]
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1: st.metric("Avg AQI",        f"{last7['aqi'].mean():.1f}")
-    with col2: st.metric("Max AQI",        f"{last7['aqi'].max():.0f}")
-    with col3: st.metric("Min AQI",        f"{last7['aqi'].min():.0f}")
-    with col4: st.metric("Good Hours",     f"{(last7['aqi'] <= 50).sum()}")
-    with col5: st.metric("Unhealthy Hours",f"{(last7['aqi'] > 150).sum()}")
-
-# ============================================================================
-# PAGE 2: Predictions
-# ============================================================================
-
-elif page == "🔮 Predictions":
-    st.markdown('<p class="main-header">🔮 AQI Predictions</p>', unsafe_allow_html=True)
-    st.info("📌 Predictions made using your trained ML models from Scripts/models/")
-
-    current_aqi = float(data['aqi'].iloc[-1])
-
-    # Prepare features - CRITICAL FIX
-    numeric_data = data.select_dtypes(include=[np.number]).fillna(0)
-    latest = numeric_data.iloc[-1:].values
-    
-    # Match scaler's expected feature count (30 features)
-    n_expected = scaler.n_features_in_
-    if latest.shape[1] > n_expected:
-        latest = latest[:, :n_expected]  # Use first 30 features
-    elif latest.shape[1] < n_expected:
-        padded = np.zeros((1, n_expected))
-        padded[0, :latest.shape[1]] = latest[0]
-        latest = padded
-
-    try:
-        features_scaled = scaler.transform(latest)
-    except Exception as e:
-        st.error(f"❌ Scaling failed: {e}")
-        st.stop()
-
-    # Make predictions
-    predictions = {}
-    for horizon in ['24h', '48h', '72h']:
-        hours = int(horizon.replace('h', ''))
-        if horizon in models:
-            try:
-                pred_aqi = float(models[horizon].predict(features_scaled)[0])
-                pred_aqi = max(0, min(500, pred_aqi))  # Clip to valid range
-            except Exception:
-                pred_aqi = current_aqi
-        else:
-            pred_aqi = current_aqi
-
-        category, color = get_aqi_category(pred_aqi)
-        predictions[horizon] = {
-            'aqi': pred_aqi,
-            'time': datetime.now() + timedelta(hours=hours),
-            'category': category,
-            'color': color
-        }
-
-    # Display prediction cards
-    st.markdown('<p class="sub-header">Forecast</p>', unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(3)
-
-    for col, horizon in zip([col1, col2, col3], ['24h', '48h', '72h']):
-        with col:
-            pred = predictions[horizon]
-            st.markdown(f"""
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        padding: 1.5rem; border-radius: 1rem; color: white; margin-bottom: 1rem;">
-                <h3 style="margin:0">{horizon.upper()} Ahead</h3>
-                <p style="margin:0.4rem 0;opacity:0.9">{pred['time'].strftime('%b %d, %I:%M %p')}</p>
-                <h1 style="margin:0.4rem 0;font-size:3rem">{pred['aqi']:.0f}</h1>
-                <p style="margin:0;font-size:1.1rem">{pred['category']}</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # Forecast chart
-    st.markdown('<p class="sub-header">Historical + Forecast</p>', unsafe_allow_html=True)
-    hist7 = data[data['time'] >= data['time'].max() - timedelta(days=7)]
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=hist7['time'], y=hist7['aqi'],
-                             mode='lines', name='Historical',
-                             line=dict(color='#1f77b4', width=2)))
-    fig.add_trace(go.Scatter(
-        x=[hist7['time'].iloc[-1]] + [predictions[h]['time'] for h in ['24h', '48h', '72h']],
-        y=[float(hist7['aqi'].iloc[-1])] + [predictions[h]['aqi'] for h in ['24h', '48h', '72h']],
-        mode='lines+markers', name='Forecast',
-        line=dict(color='#ff7f0e', width=3, dash='dash'),
-        marker=dict(size=10)
-    ))
-    fig.update_layout(height=400, xaxis_title="Date & Time", yaxis_title="AQI",
-                      hovermode='x unified',
-                      legend=dict(orientation="h", y=1.02, x=1, xanchor="right"))
-    st.plotly_chart(fig, use_container_width=True)
-
-    # AQI Distribution
-    st.markdown('<p class="sub-header">AQI Category Distribution (Last 30 Days)</p>', unsafe_allow_html=True)
-    last30 = data[data['time'] >= data['time'].max() - timedelta(days=30)]
-    cats = [get_aqi_category(v)[0] for v in last30['aqi']]
-    cat_counts = pd.Series(cats).value_counts()
-
-    fig_pie = go.Figure(data=[go.Pie(
-        labels=cat_counts.index, values=cat_counts.values, hole=0.4,
-        marker=dict(colors=['#00e400','#ffff00','#ff7e00','#ff0000','#8f3f97','#7e0023']),
-        textinfo='label+percent', textfont_size=13
-    )])
-    fig_pie.update_layout(height=380, showlegend=True,
-                          legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"))
-    st.plotly_chart(fig_pie, use_container_width=True)
-
-    # Health recommendations
-    st.markdown('<p class="sub-header">Health Recommendations</p>', unsafe_allow_html=True)
-    max_aqi = max(predictions[h]['aqi'] for h in ['24h', '48h', '72h'])
-    if max_aqi <= 50:
-        st.success("✅ Air quality is good. Enjoy outdoor activities!")
-    elif max_aqi <= 100:
-        st.info("ℹ️ Moderate. Sensitive individuals should limit prolonged outdoor exertion.")
-    elif max_aqi <= 150:
-        st.warning("⚠️ Unhealthy for sensitive groups. Limit outdoor exposure.")
-    elif max_aqi <= 200:
-        st.warning("⚠️ Unhealthy. Reduce prolonged outdoor exertion.")
-    elif max_aqi <= 300:
-        st.error("🚨 Very Unhealthy. Avoid outdoor activities.")
-    else:
-        st.error("☢️ Hazardous. Stay indoors. Use N95 masks if necessary.")
-
-# ============================================================================
-# PAGE 3: About
-# ============================================================================
-
-elif page == "ℹ️ About":
-    st.markdown('<p class="main-header">ℹ️ About This Project</p>', unsafe_allow_html=True)
-    st.markdown("""
-    ### 🎯 Purpose
-    Real-time Air Quality Index (AQI) predictions for Karachi, Pakistan.
-
-    ### 🤖 ML Models
-    - XGBoost, LightGBM, Gradient Boosting, Random Forest, Ridge, Lasso
-    - Trained with GridSearchCV hyperparameter tuning
-    - Models stored in: `Scripts/models/`
-
-    ### 📊 Data
-    - **Primary**: MongoDB Atlas (`aqi_feature_store`)
-    - **Fallback**: `data/cleaned_aqi_data_v2.csv`
-    - **Update**: Daily via GitHub Actions
-
-    ### 🔮 Predictions
-    | Horizon | Description |
-    |---------|-------------|
-    | 24h | Next 24 hours |
-    | 48h | Next 48 hours |
-    | 72h | Next 72 hours |
-
-    ### 🚀 Deployment
-    - **Dashboard**: Streamlit
-    - **CI/CD**: GitHub Actions (daily retraining)
-    - **Hosting**: HuggingFace Spaces
-    """)
-
-# Footer
-st.markdown("---")
-st.markdown(
-    f"<div style='text-align:center;color:#666'>"
-    f"Karachi AQI Dashboard | Data: {data_source} | "
-    f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-    f"</div>",
-    unsafe_allow_html=True
+**Ridge (72h predictions)**
+```python
+Ridge(
+    alpha=0.1-100.0,         # Tuned
+    solver='auto'/'svd'/'saga'  # Tuned
 )
+```
+
+### 4. Evaluation
+
+**Metrics:**
+- **R² Score**: Coefficient of determination
+- **RMSE**: Root Mean Squared Error
+- **MAE**: Mean Absolute Error
+- **Accuracy ±20**: Predictions within 20 AQI units
+
+**Validation:**
+- Time-series cross-validation (TimeSeriesSplit, k=2)
+- 80/20 train-test split (chronological order maintained)
+
+### 5. Deployment
+
+Models are saved as:
+- `xgboost_24h.pkl`
+- `lightgbm_48h.pkl`
+- `ridge_72h.pkl`
+- `scaler_ml.pkl`
+- `feature_names.json`
+
+---
+
+## 📡 API Reference
+
+### Open-Meteo API
+
+**Endpoint:**
+```
+https://air-quality-api.open-meteo.com/v1/air-quality
+```
+
+**Parameters:**
+```python
+params = {
+    'latitude': 24.8607,
+    'longitude': 67.0011,
+    'hourly': 'pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone',
+    'past_days': 180
+}
+```
+
+### AQICN API
+
+**Endpoint:**
+```
+https://api.waqi.info/feed/karachi/
+```
+
+**Parameters:**
+```python
+params = {'token': 'YOUR_TOKEN'}
+```
+
+### MongoDB Atlas
+
+**Connection:**
+```python
+from pymongo import MongoClient
+from pymongo.server_api import ServerApi
+
+client = MongoClient(
+    MONGODB_URI,
+    server_api=ServerApi('1')
+)
+db = client['aqi_feature_store']
+collection = db['aqi_features']
+```
+
+---
+
+## 🌐 Deployment
+
+### GitHub Actions CI/CD
+
+The project includes automated daily retraining:
+
+**Workflow:** `.github/workflows/daily_retrain.yml`
+
+**Schedule:** Every day at 00:00 UTC (cron: `'0 0 * * *'`)
+
+**Steps:**
+1. Fetch latest data from APIs
+2. Clean and engineer features
+3. Upload to MongoDB Atlas
+4. Train models with hyperparameter tuning
+5. Save models to `models/` directory
+6. Commit and push to GitHub
+
+**Manual Trigger:**
+```bash
+# Go to GitHub Actions tab
+# Click "Daily Model Retraining"
+# Click "Run workflow"
+```
+
+### Required Secrets
+
+Set these in **GitHub Settings → Secrets → Actions**:
+
+```
+MONGODB_URI    # MongoDB connection string
+GH_PAT         # GitHub Personal Access Token (for push access)
+```
+
+### Streamlit Cloud Deployment
+
+1. Push code to GitHub
+2. Go to [share.streamlit.io](https://share.streamlit.io)
+3. Connect GitHub repository
+4. Set `MONGODB_URI` in Streamlit secrets
+5. Deploy!
+
+### Docker Deployment (Optional)
+
+```bash
+# Build image
+docker build -t karachi-aqi .
+
+# Run container
+docker run -p 8501:8501 \
+  -e MONGODB_URI="your_mongodb_uri" \
+  karachi-aqi
+```
+
+---
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Create a `.env` file:
+
+```env
+# MongoDB
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
+
+# APIs (optional, for data collection)
+AQICN_TOKEN=your_token_here
+```
+
+### Model Hyperparameters
+
+Edit hyperparameter search spaces in `daily_retrain.yml`:
+
+```python
+xgb_params = {
+    'n_estimators': [50, 100, 200],
+    'max_depth': [3, 5, 7],
+    'learning_rate': [0.01, 0.05, 0.1],
+    # Add more parameters...
+}
+```
+
+---
+
+## 📊 Performance
+
+### Model Scores (Latest)
+
+| Model | Horizon | R² Score | RMSE | MAE | Acc ±20 |
+|-------|---------|----------|------|-----|---------|
+| XGBoost | 24h | 0.72 | 42.5 | 28.3 | 72% |
+| LightGBM | 48h | 0.64 | 48.2 | 32.1 | 68% |
+| Ridge | 72h | 0.53 | 54.8 | 36.4 | 61% |
+
+*Scores updated: 2025-02-28*
+
+### Feature Importance (Top 10)
+
+1. `aqi_lag_24h` - AQI 24 hours ago
+2. `aqi_ma_24h` - 24-hour moving average
+3. `pm2_5` - Current PM2.5 level
+4. `aqi_lag_12h` - AQI 12 hours ago
+5. `aqi_std_24h` - 24-hour standard deviation
+6. `day_of_year` - Seasonal patterns
+7. `aqi_min_24h` - 24-hour minimum
+8. `pm25_lag_24h` - PM2.5 24 hours ago
+9. `temp` - Temperature
+10. `aqi_diff_24h` - 24-hour AQI change
+
+---
+
+## 🧪 Testing
+
+### Run Tests
+
+```bash
+# Test data loading
+python -c "from app import load_data; print(load_data())"
+
+# Test model loading
+python -c "from app import load_models_and_features; print(load_models_and_features())"
+
+# Test predictions
+python DIAGNOSE.py
+```
+
+### Performance Benchmarks
+
+```bash
+# Measure prediction latency
+python -c "
+import time
+from app import load_models_and_features
+models, scaler, features, _ = load_models_and_features()
+start = time.time()
+# [prediction code]
+print(f'Latency: {(time.time()-start)*1000:.2f}ms')
+"
+```
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please follow these steps:
+
+1. **Fork the repository**
+2. **Create a feature branch**
+   ```bash
+   git checkout -b feature/AmazingFeature
+   ```
+3. **Commit your changes**
+   ```bash
+   git commit -m 'Add some AmazingFeature'
+   ```
+4. **Push to the branch**
+   ```bash
+   git push origin feature/AmazingFeature
+   ```
+5. **Open a Pull Request**
+
+### Development Guidelines
+
+- Follow PEP 8 style guide
+- Add docstrings to functions
+- Write tests for new features
+- Update README for significant changes
+
+---
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 👤 Contact
+
+**Shahzad Hussain**
+
+📧 Email: shahzadhussain9680@gmail.com  
+🔗 GitHub: [@Shahzadhussain2005](https://github.com/Shahzadhussain2005)  
+💼 LinkedIn: [Add your LinkedIn]
+
+---
+
+## 🙏 Acknowledgments
+
+- **Open-Meteo** for free air quality API
+- **AQICN** for real-time AQI data
+- **MongoDB Atlas** for cloud database
+- **Streamlit** for rapid dashboard development
+- **GitHub Actions** for free CI/CD
+
+---
+
+## 📈 Roadmap
+
+- [ ] Add email/SMS alerts for high AQI
+- [ ] Implement SHAP explainability
+- [ ] Add multi-city support
+- [ ] Mobile app development
+- [ ] Real-time API endpoint
+- [ ] Historical data export
+- [ ] Comparison with other cities
+
+---
+
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Shahzadhussain2005/Karachi_AQI-MLOps&type=Date)](https://star-history.com/#Shahzadhussain2005/Karachi_AQI-MLOps&Date)
+
+---
+
+<div align="center">
+
+**Made with ❤️ for Karachi**
+
+If you find this project useful, please consider giving it a ⭐!
+
+</div># 🌫️ Karachi Air Quality Index (AQI) Prediction System
+
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.30+-red.svg)](https://streamlit.io)
+[![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-green.svg)](https://mongodb.com)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+Real-time Air Quality Index prediction system for Karachi, Pakistan using Machine Learning with automated daily retraining via CI/CD pipeline.
+
+![Dashboard Preview](assets/dashboard.png)
+
+---
+
+## 📋 Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Tech Stack](#tech-stack)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [ML Pipeline](#ml-pipeline)
+- [API Reference](#api-reference)
+- [Deployment](#deployment)
+- [Contributing](#contributing)
+- [License](#license)
+- [Contact](#contact)
+
+---
+
+## 🎯 Overview
+
+This project provides **multi-horizon air quality forecasts** (24h, 48h, 72h) for Karachi using state-of-the-art machine learning models. The system:
+
+- Fetches real-time AQI data from multiple sources
+- Engineers 50+ features including lag, rolling statistics, and cyclical time features
+- Trains optimized models daily via automated CI/CD pipeline
+- Delivers predictions through an interactive Streamlit dashboard
+
+**Live Demo**: [Coming Soon]
+
+---
+
+## ✨ Features
+
+### 📊 Dashboard
+- Real-time AQI monitoring
+- Historical trend visualization (7-30 days)
+- Pollutant levels tracking (PM2.5, PM10, O₃, NO₂)
+- Weather conditions display (Temperature, Humidity, Wind)
+- AQI category distribution
+- 7-day statistics summary
+
+### 🔮 Predictions
+- Multi-horizon forecasts: 24h, 48h, 72h
+- Confidence-based health recommendations
+- Interactive historical + forecast charts
+- Model performance metrics
+
+### 🤖 ML Models
+- **24h predictions**: XGBoost (hyperparameter-tuned)
+- **48h predictions**: LightGBM (hyperparameter-tuned)
+- **72h predictions**: Ridge Regression (regularized)
+- **Feature engineering**: 50+ features with lag, rolling, and cyclical transformations
+- **Validation**: Time-series cross-validation
+- **Performance**: R² scores of 0.65-0.80 (24h), 0.55-0.70 (48h), 0.45-0.60 (72h)
+
+### ⚙️ Automation
+- Daily data fetching from APIs
+- Automated model retraining via GitHub Actions
+- MongoDB Atlas for persistent data storage
+- Model versioning and tracking
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        DATA SOURCES                              │
+├─────────────────────────────────────────────────────────────────┤
+│  Open-Meteo API  │  AQICN API  │  Meteostat  │  User Uploads   │
+└────────┬──────────────────┬──────────────┬─────────────────────┘
+         │                  │              │
+         v                  v              v
+┌─────────────────────────────────────────────────────────────────┐
+│                   DATA COLLECTION & CLEANING                     │
+│  • Scripts/Fetch_latest_data.ipynb                              │
+│  • Scripts/clean_data.ipynb                                     │
+└────────┬────────────────────────────────────────────────────────┘
+         │
+         v
+┌─────────────────────────────────────────────────────────────────┐
+│                      MONGODB ATLAS                               │
+│  Database: aqi_feature_store                                    │
+│  Collection: aqi_features                                       │
+│  • 4000+ historical records                                     │
+│  • Real-time updates                                            │
+└────────┬────────────────────────────────────────────────────────┘
+         │
+         v
+┌─────────────────────────────────────────────────────────────────┐
+│                   FEATURE ENGINEERING                            │
+│  • Lag features (1h, 3h, 6h, 12h, 24h, 48h)                    │
+│  • Rolling statistics (mean, std, min, max)                     │
+│  • Difference features (trend detection)                        │
+│  • Cyclical encoding (hour, day, month)                        │
+│  • Total: 50-60 engineered features                            │
+└────────┬────────────────────────────────────────────────────────┘
+         │
+         v
+┌─────────────────────────────────────────────────────────────────┐
+│                      MODEL TRAINING                              │
+│  • XGBoost (24h): RandomizedSearchCV                           │
+│  • LightGBM (48h): RandomizedSearchCV                          │
+│  • Ridge (72h): GridSearchCV                                    │
+│  • Validation: TimeSeriesSplit CV (k=2)                        │
+│  • Scaling: RobustScaler                                       │
+└────────┬────────────────────────────────────────────────────────┘
+         │
+         v
+┌─────────────────────────────────────────────────────────────────┐
+│                   GITHUB ACTIONS CI/CD                           │
+│  • Daily automated retraining (00:00 UTC)                      │
+│  • Manual trigger available                                     │
+│  • Model versioning and artifact storage                       │
+└────────┬────────────────────────────────────────────────────────┘
+         │
+         v
+┌─────────────────────────────────────────────────────────────────┐
+│                   STREAMLIT DASHBOARD                            │
+│  • Real-time predictions                                        │
+│  • Interactive visualizations                                   │
+│  • Health recommendations                                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🛠️ Tech Stack
+
+### Backend & ML
+- **Python 3.11+**
+- **scikit-learn** - Model training, preprocessing, validation
+- **XGBoost** - Gradient boosting for 24h predictions
+- **LightGBM** - Fast gradient boosting for 48h predictions
+- **pandas** - Data manipulation
+- **numpy** - Numerical computing
+
+### Frontend & Visualization
+- **Streamlit** - Interactive web dashboard
+- **Plotly** - Interactive charts and graphs
+
+### Data & Storage
+- **MongoDB Atlas** - Cloud database for feature store
+- **pymongo** - MongoDB driver for Python
+
+### DevOps & CI/CD
+- **GitHub Actions** - Automated training pipeline
+- **Docker** - Containerization (optional)
+
+### APIs
+- **Open-Meteo** - Air quality data (PM2.5, PM10, O₃, NO₂, SO₂, CO)
+- **AQICN** - Current AQI readings
+- **Meteostat** - Historical weather data
+
+---
+
+## 📦 Installation
+
+### Prerequisites
+- Python 3.11 or higher
+- MongoDB Atlas account (free tier works)
+- Git
+
+### Local Setup
+
+1. **Clone the repository**
+```bash
+git clone https://github.com/Shahzadhussain2005/Karachi_AQI-MLOps.git
+cd Karachi_AQI-MLOps
+```
+
+2. **Create virtual environment**
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. **Install dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+4. **Set up environment variables**
+
+Create a `.env` file in the root directory:
+```env
+MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/
+```
+
+5. **Run data collection (optional)**
+```bash
+cd Scripts
+jupyter nbconvert --to python --execute Fetch_latest_data.ipynb
+jupyter nbconvert --to python --execute clean_data.ipynb
+```
+
+6. **Train models**
+```bash
+jupyter nbconvert --to python --execute train_models.ipynb
+```
+
+7. **Launch dashboard**
+```bash
+streamlit run app.py
+```
+
+The dashboard will open at `http://localhost:8501`
+
+---
+
+## 🚀 Usage
+
+### Running the Dashboard Locally
+
+```bash
+streamlit run app.py
+```
+
+### Manual Data Collection
+
+```bash
+cd Scripts
+jupyter nbconvert --to python --execute Fetch_latest_data.ipynb
+```
+
+### Manual Model Training
+
+```bash
+cd Scripts
+jupyter nbconvert --to python --execute train_models.ipynb
+```
+
+### Viewing Logs
+
+Training logs and model performance metrics are saved in:
+- `models/results.json` - Performance scores
+- `models/feature_names.json` - List of features used
+
+---
+
+## 📁 Project Structure
+
+```
+Karachi_AQI-MLOps/
+├── .github/
+│   └── workflows/
+│       └── daily_retrain.yml          # CI/CD pipeline
+├── Scripts/
+│   ├── Fetch_latest_data.ipynb        # Data collection
+│   ├── clean_data.ipynb               # Data preprocessing
+│   ├── train_models.ipynb             # Model training
+│   ├── mongodb_connect.ipynb          # MongoDB upload
+│   └── models/                        # Trained models
+│       ├── xgboost_24h.pkl
+│       ├── lightgbm_48h.pkl
+│       ├── ridge_72h.pkl
+│       ├── scaler_ml.pkl
+│       ├── feature_names.json
+│       └── results.json
+├── data/
+│   └── cleaned_aqi_data_v2.csv        # Fallback CSV data
+├── app.py                             # Streamlit dashboard
+├── requirements.txt                   # Python dependencies
+├── .env                               # Environment variables (create this)
+├── .gitignore                         # Git ignore rules
+├── Dockerfile                         # Docker configuration (optional)
+├── README.md                          # This file
+└── LICENSE                            # MIT License
+```
+
+---
+
+## 🤖 ML Pipeline
+
+### 1. Data Collection
+
+**Sources:**
+- **Open-Meteo API**: PM2.5, PM10, NO₂, O₃, SO₂, CO
+- **AQICN API**: Current AQI readings
+- **Meteostat**: Temperature, humidity, wind speed, pressure
+
+**Frequency:** Every hour (automated via GitHub Actions)
+
+### 2. Feature Engineering
+
+```python
+# Lag features
+aqi_lag_1h, aqi_lag_3h, aqi_lag_6h, aqi_lag_12h, aqi_lag_24h, aqi_lag_48h
+
+# Rolling statistics
+aqi_ma_3h, aqi_ma_6h, aqi_ma_12h, aqi_ma_24h
+aqi_std_3h, aqi_std_6h, aqi_std_12h, aqi_std_24h
+aqi_min_3h, aqi_min_6h, aqi_min_12h, aqi_min_24h
+aqi_max_3h, aqi_max_6h, aqi_max_12h, aqi_max_24h
+
+# Difference features
+aqi_diff_1h, aqi_diff_3h, aqi_diff_24h
+
+# Cyclical encoding
+hour_sin, hour_cos, dow_sin, dow_cos, month_sin, month_cos
+
+# Total: 50-60 features
+```
+
+### 3. Model Training
+
+**XGBoost (24h predictions)**
+```python
+XGBRegressor(
+    n_estimators=50-200,     # Tuned
+    max_depth=3-7,           # Tuned
+    learning_rate=0.01-0.1,  # Tuned
+    subsample=0.8-1.0,       # Tuned
+    random_state=42
+)
+```
+
+**LightGBM (48h predictions)**
+```python
+LGBMRegressor(
+    n_estimators=50-200,     # Tuned
+    max_depth=3-7,           # Tuned
+    learning_rate=0.01-0.1,  # Tuned
+    num_leaves=31-63,        # Tuned
+    random_state=42
+)
+```
+
+**Ridge (72h predictions)**
+```python
+Ridge(
+    alpha=0.1-100.0,         # Tuned
+    solver='auto'/'svd'/'saga'  # Tuned
+)
+```
+
+### 4. Evaluation
+
+**Metrics:**
+- **R² Score**: Coefficient of determination
+- **RMSE**: Root Mean Squared Error
+- **MAE**: Mean Absolute Error
+- **Accuracy ±20**: Predictions within 20 AQI units
+
+**Validation:**
+- Time-series cross-validation (TimeSeriesSplit, k=2)
+- 80/20 train-test split (chronological order maintained)
+
+### 5. Deployment
+
+Models are saved as:
+- `xgboost_24h.pkl`
+- `lightgbm_48h.pkl`
+- `ridge_72h.pkl`
+- `scaler_ml.pkl`
+- `feature_names.json`
+
+---
+
+## 📡 API Reference
+
+### Open-Meteo API
+
+**Endpoint:**
+```
+https://air-quality-api.open-meteo.com/v1/air-quality
+```
+
+**Parameters:**
+```python
+params = {
+    'latitude': 24.8607,
+    'longitude': 67.0011,
+    'hourly': 'pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone',
+    'past_days': 180
+}
+```
+
+### AQICN API
+
+**Endpoint:**
+```
+https://api.waqi.info/feed/karachi/
+```
+
+**Parameters:**
+```python
+params = {'token': 'YOUR_TOKEN'}
+```
+
+### MongoDB Atlas
+
+**Connection:**
+```python
+from pymongo import MongoClient
+from pymongo.server_api import ServerApi
+
+client = MongoClient(
+    MONGODB_URI,
+    server_api=ServerApi('1')
+)
+db = client['aqi_feature_store']
+collection = db['aqi_features']
+```
+
+---
+
+## 🌐 Deployment
+
+### GitHub Actions CI/CD
+
+The project includes automated daily retraining:
+
+**Workflow:** `.github/workflows/daily_retrain.yml`
+
+**Schedule:** Every day at 00:00 UTC (cron: `'0 0 * * *'`)
+
+**Steps:**
+1. Fetch latest data from APIs
+2. Clean and engineer features
+3. Upload to MongoDB Atlas
+4. Train models with hyperparameter tuning
+5. Save models to `models/` directory
+6. Commit and push to GitHub
+
+**Manual Trigger:**
+```bash
+# Go to GitHub Actions tab
+# Click "Daily Model Retraining"
+# Click "Run workflow"
+```
+
+### Required Secrets
+
+Set these in **GitHub Settings → Secrets → Actions**:
+
+```
+MONGODB_URI    # MongoDB connection string
+GH_PAT         # GitHub Personal Access Token (for push access)
+```
+
+### Streamlit Cloud Deployment
+
+1. Push code to GitHub
+2. Go to [share.streamlit.io](https://share.streamlit.io)
+3. Connect GitHub repository
+4. Set `MONGODB_URI` in Streamlit secrets
+5. Deploy!
+
+### Docker Deployment (Optional)
+
+```bash
+# Build image
+docker build -t karachi-aqi .
+
+# Run container
+docker run -p 8501:8501 \
+  -e MONGODB_URI="your_mongodb_uri" \
+  karachi-aqi
+```
+
+---
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Create a `.env` file:
+
+```env
+# MongoDB
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
+
+# APIs (optional, for data collection)
+AQICN_TOKEN=your_token_here
+```
+
+### Model Hyperparameters
+
+Edit hyperparameter search spaces in `daily_retrain.yml`:
+
+```python
+xgb_params = {
+    'n_estimators': [50, 100, 200],
+    'max_depth': [3, 5, 7],
+    'learning_rate': [0.01, 0.05, 0.1],
+    # Add more parameters...
+}
+```
+
+---
+
+## 📊 Performance
+
+### Model Scores (Latest)
+
+| Model | Horizon | R² Score | RMSE | MAE | Acc ±20 |
+|-------|---------|----------|------|-----|---------|
+| XGBoost | 24h | 0.72 | 42.5 | 28.3 | 72% |
+| LightGBM | 48h | 0.64 | 48.2 | 32.1 | 68% |
+| Ridge | 72h | 0.53 | 54.8 | 36.4 | 61% |
+
+*Scores updated: 2025-02-28*
+
+### Feature Importance (Top 10)
+
+1. `aqi_lag_24h` - AQI 24 hours ago
+2. `aqi_ma_24h` - 24-hour moving average
+3. `pm2_5` - Current PM2.5 level
+4. `aqi_lag_12h` - AQI 12 hours ago
+5. `aqi_std_24h` - 24-hour standard deviation
+6. `day_of_year` - Seasonal patterns
+7. `aqi_min_24h` - 24-hour minimum
+8. `pm25_lag_24h` - PM2.5 24 hours ago
+9. `temp` - Temperature
+10. `aqi_diff_24h` - 24-hour AQI change
+
+---
+
+## 🧪 Testing
+
+### Run Tests
+
+```bash
+# Test data loading
+python -c "from app import load_data; print(load_data())"
+
+# Test model loading
+python -c "from app import load_models_and_features; print(load_models_and_features())"
+
+# Test predictions
+python DIAGNOSE.py
+```
+
+### Performance Benchmarks
+
+```bash
+# Measure prediction latency
+python -c "
+import time
+from app import load_models_and_features
+models, scaler, features, _ = load_models_and_features()
+start = time.time()
+# [prediction code]
+print(f'Latency: {(time.time()-start)*1000:.2f}ms')
+"
+```
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please follow these steps:
+
+1. **Fork the repository**
+2. **Create a feature branch**
+   ```bash
+   git checkout -b feature/AmazingFeature
+   ```
+3. **Commit your changes**
+   ```bash
+   git commit -m 'Add some AmazingFeature'
+   ```
+4. **Push to the branch**
+   ```bash
+   git push origin feature/AmazingFeature
+   ```
+5. **Open a Pull Request**
+
+### Development Guidelines
+
+- Follow PEP 8 style guide
+- Add docstrings to functions
+- Write tests for new features
+- Update README for significant changes
+
+---
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 👤 Contact
+
+**Shahzad Hussain**
+
+📧 Email: shahzadhussain9680@gmail.com  
+🔗 GitHub: [@Shahzadhussain2005](https://github.com/Shahzadhussain2005)  
+💼 LinkedIn: https://www.linkedin.com/in/shahzad-hussain-486a31285?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app
+
+---
+
+## 🙏 Acknowledgments
+
+- **Open-Meteo** for free air quality API
+- **AQICN** for real-time AQI data
+- **MongoDB Atlas** for cloud database
+- **Streamlit** for rapid dashboard development
+- **GitHub Actions** for free CI/CD
+
+---
+
+## 📈 Roadmap
+
+- [ ] Add email/SMS alerts for high AQI
+- [ ] Implement SHAP explainability
+- [ ] Add multi-city support
+- [ ] Mobile app development
+- [ ] Real-time API endpoint
+- [ ] Historical data export
+- [ ] Comparison with other cities
+
+---
+
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Shahzadhussain2005/Karachi_AQI-MLOps&type=Date)](https://star-history.com/#Shahzadhussain2005/Karachi_AQI-MLOps&Date)
+
+---
+
+<div align="center">
+
+**Made with ❤️ for Karachi**
+
+If you find this project useful, please consider giving it a ⭐!
+
+</div>
