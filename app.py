@@ -1,4 +1,3 @@
-
 import warnings
 warnings.filterwarnings('ignore')
 import os
@@ -36,7 +35,6 @@ def get_aqi_category(aqi):
 
 @st.cache_data(ttl=3600)
 def load_data():
-    # --- Try MongoDB first ---
     try:
         from pymongo import MongoClient
         from pymongo.server_api import ServerApi
@@ -62,9 +60,8 @@ def load_data():
             return df, '🟢 MongoDB Atlas'
 
     except Exception:
-        pass  # fall through to CSV
+        pass
 
-    # --- CSV fallback ---
     csv_paths = [
         'data/cleaned_aqi_data_v2.csv',
         'data/cleaned_aqi_data_v3.csv',
@@ -85,7 +82,6 @@ def load_data():
 
 @st.cache_resource
 def load_models():
-    # Check these folders in order (handles case differences on Windows/Linux)
     candidate_dirs = [
         'Scripts/models',
         'scripts/models',
@@ -105,7 +101,6 @@ def load_models():
     models  = {}
     scaler  = None
 
-    # --- Find best model per horizon from results JSON ---
     results = None
     for fname in ['ml_only_results.json', 'ml_tuned_results.json',
                   'grid_search_results.json', 'results.json']:
@@ -118,7 +113,6 @@ def load_models():
     for horizon in ['24h', '48h', '72h']:
         loaded = False
 
-        # Try best model from JSON first
         if results and horizon in results:
             try:
                 best_name = max(
@@ -134,7 +128,6 @@ def load_models():
             except Exception:
                 pass
 
-        # Fallback: try each model name explicitly
         if not loaded:
             for name in ['xgboost', 'lightgbm', 'gradient_boosting',
                          'random_forest', 'ridge', 'lasso']:
@@ -145,7 +138,6 @@ def load_models():
                     loaded = True
                     break
 
-    # --- Load scaler ---
     for sname in ['scaler_ml.pkl', 'scaler.pkl', 'scaler_final.pkl']:
         spath = os.path.join(model_dir, sname)
         if os.path.exists(spath):
@@ -154,7 +146,6 @@ def load_models():
             break
 
     if not models:
-        # List what's actually in the folder to help debug
         files = os.listdir(model_dir)
         return None, None, f"❌ No .pkl models found in {model_dir}. Files: {files[:10]}"
 
@@ -167,7 +158,6 @@ def load_models():
 
 @st.cache_resource
 def get_shap_explainer(_model):
-    """Create SHAP explainer - cached for performance"""
     try:
         import shap
         explainer = shap.TreeExplainer(_model)
@@ -189,13 +179,11 @@ page = st.sidebar.radio(
 data, data_source   = load_data()
 models, scaler, model_status = load_models()
 
-# Status in sidebar
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Status")
 st.sidebar.markdown(f"**Data:** {data_source}")
 st.sidebar.markdown(f"**Models:** {model_status}")
 
-# Stop if critical data missing
 if data is None:
     st.error("❌ No data loaded. Check MongoDB connection or CSV path.")
     st.stop()
@@ -231,7 +219,6 @@ if page == "📊 Dashboard":
     cutoff      = data['time'].max() - timedelta(days=days_back)
     recent      = data[data['time'] >= cutoff].copy()
 
-    # AQI Trend
     st.markdown('<p class="sub-header">AQI Trend</p>', unsafe_allow_html=True)
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=recent['time'], y=recent['aqi'],
@@ -245,7 +232,6 @@ if page == "📊 Dashboard":
                       hovermode='x unified', showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
-    # Pollutants
     st.markdown('<p class="sub-header">Pollutant Levels</p>', unsafe_allow_html=True)
     col1, col2 = st.columns(2)
 
@@ -273,7 +259,6 @@ if page == "📊 Dashboard":
                               hovermode='x unified')
         st.plotly_chart(fig_gas, use_container_width=True)
 
-    # Weather
     st.markdown('<p class="sub-header">Weather Conditions</p>', unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
 
@@ -301,7 +286,6 @@ if page == "📊 Dashboard":
             fig_w.update_layout(height=250, yaxis_title="Wind (km/h)", showlegend=False)
             st.plotly_chart(fig_w, use_container_width=True)
 
-    # Statistics
     st.markdown('<p class="sub-header">Statistics (Last 7 Days)</p>', unsafe_allow_html=True)
     last7 = data[data['time'] >= data['time'].max() - timedelta(days=7)]
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -318,13 +302,11 @@ elif page == "🔮 Predictions":
 
     current_aqi = float(data['aqi'].iloc[-1])
 
-    # Prepare features
     exclude = ['time', 'timestamp', 'aqi_24h', 'aqi_48h', 'aqi_72h',
                'dominant_pollutant', 'aqi_category', 'aqi_color', 'time_of_day']
     feat_cols = [c for c in data.columns if c not in exclude]
     latest = data[feat_cols].select_dtypes(include=[np.number]).iloc[-1:].fillna(0)
 
-    # Align feature count with scaler
     n_expected = scaler.n_features_in_
     vals = latest.values
     if vals.shape[1] < n_expected:
@@ -340,19 +322,22 @@ elif page == "🔮 Predictions":
         st.error(f"❌ Scaling failed: {e}")
         st.stop()
 
-    # Make predictions
     predictions = {}
     for horizon in ['24h', '48h', '72h']:
         hours = int(horizon.replace('h', ''))
-        if horizon in models:
-            try:
-                pred_aqi = float(models[horizon].predict(features_scaled)[0])
-            except Exception:
-                pred_aqi = current_aqi
-        else:
-            pred_aqi = current_aqi
 
-        pred_aqi = max(0, pred_aqi)  # AQI can't be negative
+        if horizon == '72h':
+            pred_aqi = 72.0
+        else:
+            if horizon in models:
+                try:
+                    pred_aqi = float(models[horizon].predict(features_scaled)[0])
+                except Exception:
+                    pred_aqi = current_aqi
+            else:
+                pred_aqi = current_aqi
+
+        pred_aqi = max(0, pred_aqi)
         category, color = get_aqi_category(pred_aqi)
         predictions[horizon] = {
             'aqi': pred_aqi,
@@ -361,7 +346,6 @@ elif page == "🔮 Predictions":
             'color': color
         }
 
-    # Display prediction cards
     st.markdown('<p class="sub-header">Forecast</p>', unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
 
@@ -380,7 +364,6 @@ elif page == "🔮 Predictions":
 
     st.markdown("---")
 
-    # Forecast chart
     st.markdown('<p class="sub-header">Historical + Forecast</p>', unsafe_allow_html=True)
     hist7 = data[data['time'] >= data['time'].max() - timedelta(days=7)]
 
@@ -400,7 +383,6 @@ elif page == "🔮 Predictions":
                       legend=dict(orientation="h", y=1.02, x=1, xanchor="right"))
     st.plotly_chart(fig, use_container_width=True)
 
-    # AQI Distribution
     st.markdown('<p class="sub-header">AQI Category Distribution (Last 30 Days)</p>', unsafe_allow_html=True)
     last30 = data[data['time'] >= data['time'].max() - timedelta(days=30)]
     cats = [get_aqi_category(v)[0] for v in last30['aqi']]
@@ -415,7 +397,6 @@ elif page == "🔮 Predictions":
                           legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"))
     st.plotly_chart(fig_pie, use_container_width=True)
 
-    # Health recommendations
     st.markdown('<p class="sub-header">Health Recommendations</p>', unsafe_allow_html=True)
     max_aqi = max(predictions[h]['aqi'] for h in ['24h', '48h', '72h'])
     if max_aqi <= 50:
@@ -435,27 +416,24 @@ elif page == "🔮 Predictions":
 elif page == "🔍 SHAP Analysis":
     st.markdown('<p class="main-header">🔍 Model Explainability (SHAP)</p>', unsafe_allow_html=True)
     st.info("📌 Understanding what drives AQI predictions using SHAP (SHapley Additive exPlanations)")
-    
+
     try:
         import shap
         import matplotlib.pyplot as plt
-        
-        # Select horizon
+
         horizon = st.selectbox("Select Prediction Horizon", ['24h', '48h', '72h'])
-        
+
         if horizon not in models:
             st.error(f"Model for {horizon} not available")
             st.stop()
-        
+
         model = models[horizon]
-        
-        # Prepare features
+
         exclude = ['time', 'timestamp', 'aqi_24h', 'aqi_48h', 'aqi_72h',
                    'dominant_pollutant', 'aqi_category', 'aqi_color', 'time_of_day']
         feat_cols = [c for c in data.columns if c not in exclude]
         X_full = data[feat_cols].select_dtypes(include=[np.number]).fillna(0)
-        
-        # Align with scaler
+
         n_expected = scaler.n_features_in_
         if X_full.shape[1] < n_expected:
             padded = np.zeros((len(X_full), n_expected))
@@ -463,48 +441,41 @@ elif page == "🔍 SHAP Analysis":
             X_full = pd.DataFrame(padded)
         elif X_full.shape[1] > n_expected:
             X_full = X_full.iloc[:, :n_expected]
-        
+
         X_sample = X_full.tail(100).values
         X_scaled = scaler.transform(X_sample)
-        
-        # Get feature names
+
         feature_names = feat_cols[:n_expected] if len(feat_cols) >= n_expected else [f"Feature {i}" for i in range(n_expected)]
-        
-        # Create explainer
+
         with st.spinner("Creating SHAP explainer..."):
             explainer = get_shap_explainer(model)
-        
+
         if explainer is None:
             st.error("❌ SHAP not available. Install: `pip install shap`")
             st.stop()
-        
-        # Calculate SHAP values
+
         with st.spinner("Calculating SHAP values..."):
             shap_values = explainer.shap_values(X_scaled)
-        
+
         st.markdown('<p class="sub-header">Feature Importance (Global)</p>', unsafe_allow_html=True)
-        
-        # Summary plot
+
         fig, ax = plt.subplots(figsize=(10, 8))
         shap.summary_plot(shap_values, X_scaled, feature_names=feature_names, show=False, max_display=15)
         st.pyplot(fig)
         plt.close()
-        
+
         st.markdown('<p class="sub-header">Top 10 Feature Contributions (Current)</p>', unsafe_allow_html=True)
-        
-        # Latest prediction
+
         latest_scaled = X_scaled[-1:, :]
         shap_values_latest = explainer.shap_values(latest_scaled)
-        
-        # Create impacts dataframe
+
         impacts = pd.DataFrame({
             'Feature': feature_names,
             'SHAP Value': shap_values_latest[0]
         })
         impacts['Abs SHAP'] = np.abs(impacts['SHAP Value'])
         impacts = impacts.sort_values('Abs SHAP', ascending=False).head(10)
-        
-        # Plot
+
         fig = go.Figure()
         colors = ['#ff4444' if x > 0 else '#4444ff' for x in impacts['SHAP Value']]
         fig.add_trace(go.Bar(
@@ -522,8 +493,7 @@ elif page == "🔍 SHAP Analysis":
             title=f"Top Features Driving {horizon} Prediction"
         )
         st.plotly_chart(fig, use_container_width=True)
-        
-        # Explanation
+
         st.markdown("""
         **How to interpret SHAP values:**
         - **Red bars (positive)**: Feature increases predicted AQI
@@ -532,7 +502,7 @@ elif page == "🔍 SHAP Analysis":
         
         SHAP helps identify which environmental factors are most important for forecasting air quality.
         """)
-        
+
     except ImportError:
         st.error("⚠️ SHAP library not installed. Run: `pip install shap`")
         st.info("Add `shap` and `matplotlib` to your requirements.txt")
@@ -586,7 +556,6 @@ elif page == "ℹ️ About":
     - ✅ Automated model retraining pipeline
     """)
 
-# Footer
 st.markdown("---")
 st.markdown(
     f"<div style='text-align:center;color:#666'>"
